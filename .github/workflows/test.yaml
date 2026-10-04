@@ -2,15 +2,16 @@ name: test
 
 on:
   push:
+    # Feature branches are tested through pull_request to avoid duplicate runs.
     branches:
-      - '**'
-    tags-ignore:
-      - 'v*'
+      - main
     paths-ignore:
       - '.gitignore'
       - 'LICENSE'
       - 'README.md'
   pull_request:
+    # synchronize reruns CI when commits are pushed to an existing PR.
+    types: [opened, synchronize, reopened]
     paths-ignore:
       - '.gitignore'
       - 'LICENSE'

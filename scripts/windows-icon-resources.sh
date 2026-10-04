@@ -31,7 +31,7 @@ stage_resources() {
 	for architecture in "${architectures[@]}"; do
 		source="$resource_dir/rsrc_windows_${architecture}.syso"
 		if [[ ! -s "$source" ]]; then
-			echo "missing generated Windows icon resource: $source" >&2
+			echo "missing generated Windows CLI resource: $source" >&2
 			return 1
 		fi
 		for command_dir in "${command_dirs[@]}"; do

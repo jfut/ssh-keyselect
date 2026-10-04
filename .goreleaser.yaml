@@ -27,6 +27,19 @@ builds:
       - -trimpath
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+    hooks:
+      pre:
+        - cmd: bash ./scripts/generate-windows-resource.sh prepare ssh-keyselect
+          env:
+            - SSH_KEYSELECT_TARGET_OS={{ .Os }}
+            - SSH_KEYSELECT_TARGET_ARCH={{ .Arch }}
+            - SSH_KEYSELECT_VERSION={{ .Version }}
+          output: true
+      post:
+        - cmd: bash ./scripts/generate-windows-resource.sh clean ssh-keyselect
+          env:
+            - SSH_KEYSELECT_TARGET_OS={{ .Os }}
+            - SSH_KEYSELECT_TARGET_ARCH={{ .Arch }}
   - id: ssh-keyselect-gui
     binary: ssh-keyselect-gui
     main: ./cmd/ssh-keyselect-gui
@@ -47,14 +60,14 @@ builds:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}{{ if eq .Os "windows" }} -H windowsgui{{ end }}
     hooks:
       pre:
-        - cmd: bash ./scripts/generate-windows-gui-resource.sh prepare
+        - cmd: bash ./scripts/generate-windows-resource.sh prepare ssh-keyselect-gui
           env:
             - SSH_KEYSELECT_TARGET_OS={{ .Os }}
             - SSH_KEYSELECT_TARGET_ARCH={{ .Arch }}
             - SSH_KEYSELECT_VERSION={{ .Version }}
           output: true
       post:
-        - cmd: bash ./scripts/generate-windows-gui-resource.sh clean
+        - cmd: bash ./scripts/generate-windows-resource.sh clean ssh-keyselect-gui
           env:
             - SSH_KEYSELECT_TARGET_OS={{ .Os }}
             - SSH_KEYSELECT_TARGET_ARCH={{ .Arch }}

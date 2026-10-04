@@ -4,12 +4,31 @@
 
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
 action="${1:-}"
 case "$action" in
 prepare|clean)
 	;;
 *)
-	echo "usage: $0 {prepare|clean}" >&2
+	echo "usage: $0 {prepare|clean} {ssh-keyselect|ssh-keyselect-gui}" >&2
+	exit 2
+	;;
+esac
+
+command_name="${2:-}"
+case "$command_name" in
+ssh-keyselect)
+	resource_config="assets/gui/windows-cli-resources.json"
+	resource_prefix="rsrc"
+	;;
+ssh-keyselect-gui)
+	resource_config="assets/gui/windows-gui-resources.json"
+	resource_prefix="gui"
+	;;
+*)
+	echo "usage: $0 {prepare|clean} {ssh-keyselect|ssh-keyselect-gui}" >&2
 	exit 2
 	;;
 esac
@@ -19,18 +38,19 @@ if [[ "${SSH_KEYSELECT_TARGET_OS:-}" != windows ]]; then
 fi
 
 target_arch="${SSH_KEYSELECT_TARGET_ARCH:?GoReleaser target architecture is required}"
-resource_path="cmd/ssh-keyselect-gui/gui_windows_${target_arch}.syso"
+resource_output="cmd/$command_name/$resource_prefix"
+resource_path="${resource_output}_windows_${target_arch}.syso"
 
 case "$action" in
 prepare)
 	version="${SSH_KEYSELECT_VERSION:?GoReleaser version is required}"
 	host_os="$(go env GOHOSTOS)"
 	host_arch="$(go env GOHOSTARCH)"
-	# Refresh the GUI resource for this target so Windows file properties match the release tag.
+	# Refresh this target's resource so both executables show the release version in Windows.
 	env GOOS="$host_os" GOARCH="$host_arch" go run github.com/tc-hib/go-winres@v0.3.3 make \
-		--in assets/gui/windows-gui-resources.json \
+		--in "$resource_config" \
 		--arch "$target_arch" \
-		--out cmd/ssh-keyselect-gui/gui \
+		--out "$resource_output" \
 		--file-version "$version" \
 		--product-version "$version"
 	;;

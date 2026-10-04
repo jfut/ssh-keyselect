@@ -15,7 +15,7 @@
           "0409": {
             "FileDescription": "SSH KeySelect",
             "LegalCopyright": "Copyright contributors to the ssh-keyselect project",
-            "OriginalFilename": "ssh-keyselect-gui.exe",
+            "OriginalFilename": "ssh-keyselect.exe",
             "ProductName": "SSH KeySelect"
           }
         }

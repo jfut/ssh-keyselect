@@ -14,7 +14,7 @@ import (
 )
 
 // guiDisplayEndpointPath formats endpoint paths with native Windows separators;
-// the original endpoint remains unchanged for connection and copy operations.
+// the original endpoint remains unchanged for connections.
 func guiDisplayEndpointPath(endpoint string) string {
 	if endpoint == "" {
 		return ""

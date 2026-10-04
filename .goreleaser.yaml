@@ -1,0 +1,158 @@
+version: 2
+
+project_name: ssh-keyselect
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+metadata:
+  mod_timestamp: "{{ .CommitTimestamp }}"
+
+report_sizes: true
+
+builds:
+  - id: ssh-keyselect
+    binary: ssh-keyselect
+    main: ./cmd/ssh-keyselect
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+  - id: ssh-keyselect-gui
+    binary: ssh-keyselect-gui
+    main: ./cmd/ssh-keyselect-gui
+    tags:
+      - gui
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}{{ if eq .Os "windows" }} -H windowsgui{{ end }}
+    hooks:
+      post:
+        - cmd: bash -c 'if [ "{{ .Os }}" = darwin ]; then bash ./scripts/package-macos-gui-app.sh "{{ .Path }}"; fi'
+          env:
+            - APP_VERSION={{ .Version }}
+
+upx:
+  - enabled: true
+    goos:
+      - linux
+    lzma: true
+  - enabled: true
+    goos:
+      - windows
+    goarch:
+      - amd64
+    lzma: true
+
+archives:
+  - id: binaries
+    ids:
+      - ssh-keyselect
+      - ssh-keyselect-gui
+    formats: ["tar.gz"]
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    builds_info:
+      group: root
+      owner: root
+    files:
+      - LICENSE
+      - CREDITS
+      - src: "dist/ssh-keyselect-gui_darwin_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/Info.plist"
+        dst: ssh-keyselect-gui.app/Contents
+      - src: "dist/ssh-keyselect-gui_darwin_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/PkgInfo"
+        dst: ssh-keyselect-gui.app/Contents
+      - src: "dist/ssh-keyselect-gui_darwin_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/MacOS/ssh-keyselect-gui"
+        dst: ssh-keyselect-gui.app/Contents/MacOS
+      - src: "dist/ssh-keyselect-gui_darwin_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/Resources/ssh-keyselect.icns"
+        dst: ssh-keyselect-gui.app/Contents/Resources
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+checksum:
+  name_template: "checksums.txt"
+
+nfpms:
+  - id: ssh-keyselect
+    package_name: ssh-keyselect
+    file_name_template: "{{ .ConventionalFileName }}"
+    ids:
+      - ssh-keyselect
+      - ssh-keyselect-gui
+    description: >-
+      Interactive SSH agent proxy that lets users choose which keys an SSH
+      client can offer from an existing agent. Private keys stay in the agent,
+      and signing requests for unselected keys are rejected. This helps prevent
+      unintended key use and reduces the risk of reaching an SSH server's
+      MaxAuthTries limit.
+    maintainer: Jun Futagawa <jfut@integ.jp>
+    license: Apache-2.0
+    vendor: ssh-keyselect project
+    homepage: https://github.com/jfut/ssh-keyselect
+    bindir: /usr/bin
+    section: utils
+    formats:
+      - apk
+      - deb
+      - rpm
+      - termux.deb
+      - archlinux
+    rpm:
+      signature:
+        key_file: '{{ with index .Env "GPG_KEY_PATH" }}{{ . }}{{ end }}'
+    deb:
+      lintian_overrides:
+        - statically-linked-binary
+        - changelog-file-missing-in-native-package
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/ssh-keyselect/LICENSE
+        type: file
+      - src: CREDITS
+        dst: /usr/share/doc/ssh-keyselect/CREDITS
+        type: file
+      - src: assets/gui/ssh-keyselect-gui.desktop
+        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/applications/ssh-keyselect-gui.desktop'
+      - src: assets/gui/generated/platform/16.png
+        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/icons/hicolor/16x16/apps/ssh-keyselect-gui.png'
+      - src: assets/gui/generated/platform/24.png
+        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/icons/hicolor/24x24/apps/ssh-keyselect-gui.png'
+      - src: assets/gui/generated/platform/32.png
+        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/icons/hicolor/32x32/apps/ssh-keyselect-gui.png'
+      - src: assets/gui/generated/platform/48.png
+        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/icons/hicolor/48x48/apps/ssh-keyselect-gui.png'
+      - src: assets/gui/generated/platform/256.png
+        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/icons/hicolor/256x256/apps/ssh-keyselect-gui.png'

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=SSH KeySelect
+Comment=Selective SSH Agent Proxy
+Exec=ssh-keyselect-gui
+Icon=ssh-keyselect-gui
+Terminal=false
+Categories=Utility;Security;

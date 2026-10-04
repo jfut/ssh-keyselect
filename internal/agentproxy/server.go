@@ -1,0 +1,524 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: Copyright contributors to the ssh-keyselect project.
+
+// Package agentproxy implements the SSH agent frontend and per-connection authorization.
+package agentproxy
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"sync"
+	"time"
+
+	"github.com/jfut/ssh-keyselect/internal/identity"
+	"github.com/jfut/ssh-keyselect/internal/protocol"
+	"github.com/jfut/ssh-keyselect/internal/selector"
+	"github.com/jfut/ssh-keyselect/internal/upstream"
+)
+
+const (
+	upstreamRequestTimeout = 10 * time.Second
+)
+
+// Server serves SSH agent requests while isolating authorization state per client connection.
+type Server struct {
+	Agent        upstream.Agent
+	Selector     selector.Selector
+	Logger       *slog.Logger
+	autoSelectMu sync.RWMutex
+	autoSelect   bool
+}
+
+// SetAutoSelect temporarily bypasses the picker and exposes every upstream identity.
+func (s *Server) SetAutoSelect(enabled bool) {
+	s.autoSelectMu.Lock()
+	s.autoSelect = enabled
+	s.autoSelectMu.Unlock()
+}
+
+// AutoSelect reports whether temporary pass-through mode is enabled.
+func (s *Server) AutoSelect() bool {
+	s.autoSelectMu.RLock()
+	defer s.autoSelectMu.RUnlock()
+	return s.autoSelect
+}
+
+type packetResult struct {
+	message []byte
+	err     error
+}
+
+// Serve accepts frontend connections until ctx is cancelled or the listener fails.
+func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
+	if s.Agent == nil || s.Selector == nil || listener == nil {
+		return errors.New("agent proxy is not fully configured")
+	}
+	logger := s.logger()
+	var mu sync.Mutex
+	active := make(map[net.Conn]struct{})
+	var handlers sync.WaitGroup
+	stopShutdown := context.AfterFunc(ctx, func() {
+		_ = listener.Close()
+		mu.Lock()
+		for conn := range active {
+			_ = conn.Close()
+		}
+		mu.Unlock()
+	})
+	defer stopShutdown()
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			if ctx.Err() != nil {
+				break
+			}
+			return fmt.Errorf("accept frontend connection: %w", err)
+		}
+		sessionID := newSessionID()
+		mu.Lock()
+		active[conn] = struct{}{}
+		mu.Unlock()
+		handlers.Add(1)
+		go func() {
+			defer handlers.Done()
+			defer func() {
+				mu.Lock()
+				delete(active, conn)
+				mu.Unlock()
+				_ = conn.Close()
+			}()
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					logger.Error("client handler recovered from panic", "session", sessionID)
+				}
+			}()
+			s.handleConnection(ctx, conn, sessionID, logger)
+		}()
+	}
+	mu.Lock()
+	for conn := range active {
+		_ = conn.Close()
+	}
+	mu.Unlock()
+	handlers.Wait()
+	return nil
+}
+
+func (s *Server) handleConnection(parent context.Context, conn net.Conn, sessionID string, logger *slog.Logger) {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	log := logger.With("session", sessionID)
+	log.Info("client connected")
+	defer log.Info("client disconnected")
+
+	packets := make(chan packetResult, 1)
+	go func() {
+		for {
+			message, err := protocol.ReadFrame(conn)
+			result := packetResult{message: message, err: err}
+			select {
+			case packets <- result:
+			case <-ctx.Done():
+				return
+			}
+			if err != nil {
+				cancel()
+				return
+			}
+		}
+	}()
+
+	var cached []identity.Identity
+	identitiesCached := false
+	selected := make(map[[sha256.Size]byte]struct{})
+	var sessionBinds []verifiedSessionBind
+	var upstreamSessionBinds [][]byte
+	upstreamSessionBindingRejected := false
+	resetBindingChain := func() {
+		sessionBinds = nil
+		upstreamSessionBinds = nil
+		upstreamSessionBindingRejected = false
+		cached = nil
+		identitiesCached = false
+		clear(selected)
+	}
+	sessionBindRequests := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case result := <-packets:
+			if result.err != nil {
+				if !errors.Is(result.err, io.EOF) && !errors.Is(result.err, net.ErrClosed) && ctx.Err() == nil {
+					log.Debug("client sent an invalid or incomplete agent frame")
+				}
+				return
+			}
+			if len(result.message) == 0 {
+				return
+			}
+			switch result.message[0] {
+			case protocol.RequestIdentities:
+				if len(result.message) != 1 {
+					return
+				}
+				if !identitiesCached {
+					var err error
+					if len(upstreamSessionBinds) > 0 {
+						var available []identity.Identity
+						available, err = listBoundAgentSession(ctx, s.Agent, upstreamSessionBinds)
+						if err == nil {
+							cached, err = s.selectAvailableIdentities(ctx, log, selectionContext(sessionBinds), available)
+						}
+					} else {
+						cached, err = s.selectIdentities(ctx, log, selectionContext(sessionBinds))
+					}
+					if err != nil {
+						if ctx.Err() != nil {
+							return
+						}
+						log.Warn("identity selection failed", "error", err)
+						if !writeFailure(conn) {
+							return
+						}
+						continue
+					}
+					identitiesCached = true
+					for _, id := range cached {
+						selected[identity.Digest(id.Blob)] = struct{}{}
+						log.Info("identity selected", "fingerprint", id.Fingerprint)
+					}
+				} else {
+					log.Debug("returning cached identity selection", "identity_count", len(cached), "host_binding_count", len(sessionBinds))
+				}
+				response, err := protocol.MarshalIdentities(cached)
+				if err != nil || !writeResponse(conn, response) {
+					return
+				}
+			case protocol.ExtensionRequest:
+				if sessionBindRequests >= maxSessionBindings {
+					log.Warn("rejected excessive SSH session-binding requests")
+					if !writeFailure(conn) {
+						return
+					}
+					continue
+				}
+				sessionBindRequests++
+				binding, err := verifySessionBind(result.message)
+				if err != nil {
+					log.Warn("rejected unsupported or invalid agent extension", "error", err)
+					if !writeFailure(conn) {
+						return
+					}
+					continue
+				}
+				if hasAuthenticationBinding(sessionBinds) && binding.display.IsForwarding {
+					// A new forwarded channel may repeat the forwarding path on this frontend socket.
+					log.Info("starting a new SSH agent session after an authentication binding")
+					resetBindingChain()
+				}
+				if hasSessionID(sessionBinds, binding.sessionID) {
+					log.Warn("rejected duplicate SSH session binding")
+					if !writeFailure(conn) {
+						return
+					}
+					continue
+				}
+				if hasAuthenticationBinding(sessionBinds) {
+					// Authentication-bound agent connections cannot accept later bindings.
+					log.Info("starting a new SSH agent session after an authentication binding")
+					resetBindingChain()
+				} else if identitiesCached {
+					// A new verified host context requires a fresh identity selection.
+					cached = nil
+					identitiesCached = false
+					clear(selected)
+				}
+				log.Info("verified SSH host context for identity selection", "host_key", binding.display.Fingerprint, "forwarding", binding.display.IsForwarding)
+				if upstreamSessionBindingRejected {
+					if !writeFailure(conn) {
+						return
+					}
+					continue
+				}
+				err = bindAgentSessionChain(ctx, s.Agent, upstreamSessionBinds, binding.raw)
+				if err != nil {
+					upstreamSessionBindingRejected = true
+					log.Warn("upstream agent rejected SSH session binding", "error", err)
+					if !writeFailure(conn) {
+						return
+					}
+					continue
+				}
+				upstreamSessionBinds = append(upstreamSessionBinds, binding.raw)
+				sessionBinds = append(sessionBinds, binding)
+				if !writeResponse(conn, []byte{protocol.Success}) {
+					return
+				}
+			case protocol.SignRequest:
+				keyBlob, _, _, err := protocol.ParseSignRequest(result.message)
+				if err != nil {
+					return
+				}
+				digest := identity.Digest(keyBlob)
+				if _, ok := selected[digest]; !ok {
+					log.Warn("rejected signature request for an unselected identity", "fingerprint", identity.Fingerprint(keyBlob))
+					if !writeFailure(conn) {
+						return
+					}
+					continue
+				}
+				if upstreamSessionBindingRejected {
+					if !writeFailure(conn) {
+						return
+					}
+					continue
+				}
+				log.Info("signature requested", "fingerprint", identity.Fingerprint(keyBlob))
+				var response []byte
+				if len(upstreamSessionBinds) > 0 {
+					response, err = roundTripBoundAgent(ctx, s.Agent, upstreamSessionBinds, result.message)
+				} else {
+					response, err = s.Agent.RoundTrip(ctx, result.message)
+				}
+				if err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+					log.Warn("upstream signature request failed", "error", err)
+					if !writeFailure(conn) {
+						return
+					}
+					continue
+				}
+				if !validSignResponse(response) {
+					response = []byte{protocol.Failure}
+				}
+				if !writeResponse(conn, response) {
+					return
+				}
+			default:
+				// Reject management and unknown requests to keep the proxy read/sign-only.
+				log.Warn("rejected unsupported agent request", "request_type", result.message[0])
+				if !writeFailure(conn) {
+					return
+				}
+				continue
+			}
+		}
+	}
+}
+
+func (s *Server) selectIdentities(ctx context.Context, logger *slog.Logger, requestContext selector.SelectionContext) ([]identity.Identity, error) {
+	identities, err := listAgent(ctx, s.Agent)
+	if err != nil {
+		return nil, fmt.Errorf("list upstream identities: %w", err)
+	}
+	return s.selectAvailableIdentities(ctx, logger, requestContext, identities)
+}
+
+func (s *Server) selectAvailableIdentities(ctx context.Context, logger *slog.Logger, requestContext selector.SelectionContext, identities []identity.Identity) ([]identity.Identity, error) {
+	logger.Info("identities requested", "upstream_count", len(identities))
+	if len(identities) == 0 {
+		return nil, nil
+	}
+	if s.AutoSelect() {
+		logger.Info("auto select enabled; exposing all upstream identities", "identity_count", len(identities))
+		return cloneIdentities(identities), nil
+	}
+	var chosen []identity.Identity
+	var err error
+	if contextual, ok := s.Selector.(selector.ContextualSelector); ok {
+		chosen, err = contextual.SelectWithContext(ctx, identities, requestContext)
+	} else {
+		chosen, err = s.Selector.Select(ctx, identities)
+	}
+	if err != nil {
+		if errors.Is(err, selector.ErrCancelled) {
+			logger.Info("identity selection cancelled")
+			return nil, nil
+		}
+		return nil, err
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if err := validateSelection(identities, chosen); err != nil {
+		return nil, err
+	}
+	return cloneIdentities(chosen), nil
+}
+
+func selectionContext(bindings []verifiedSessionBind) selector.SelectionContext {
+	requestContext := selector.SelectionContext{HostBindings: make([]selector.HostBinding, len(bindings))}
+	for i, binding := range bindings {
+		requestContext.HostBindings[i] = binding.display
+		requestContext.HostBindings[i].KnownHosts = append([]string(nil), binding.display.KnownHosts...)
+	}
+	return requestContext
+}
+
+func hasAuthenticationBinding(bindings []verifiedSessionBind) bool {
+	for _, binding := range bindings {
+		if !binding.display.IsForwarding {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSessionID(bindings []verifiedSessionBind, sessionID []byte) bool {
+	for _, binding := range bindings {
+		if bytes.Equal(binding.sessionID, sessionID) {
+			return true
+		}
+	}
+	return false
+}
+
+func listAgent(ctx context.Context, agent upstream.Agent) ([]identity.Identity, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, upstreamRequestTimeout)
+	defer cancel()
+	return agent.List(requestCtx)
+}
+
+func listAgentSession(ctx context.Context, session upstream.AgentSession) ([]identity.Identity, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, upstreamRequestTimeout)
+	defer cancel()
+	return session.List(requestCtx)
+}
+
+func bindAgentSession(ctx context.Context, session upstream.AgentSession, binding []byte) error {
+	requestCtx, cancel := context.WithTimeout(ctx, upstreamRequestTimeout)
+	defer cancel()
+	return session.Bind(requestCtx, binding)
+}
+
+// Bound operations replay their verified chain on short-lived connections so
+// an interactive picker never leaves an upstream agent socket idle.
+func listBoundAgentSession(ctx context.Context, agent upstream.Agent, bindings [][]byte) ([]identity.Identity, error) {
+	sessionAgent, ok := agent.(upstream.SessionAgent)
+	if !ok {
+		return nil, errors.New("upstream agent cannot open a bound session")
+	}
+	session, err := openBoundSession(ctx, sessionAgent, bindings)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = session.Close() }()
+	return listAgentSession(ctx, session)
+}
+
+func bindAgentSessionChain(ctx context.Context, agent upstream.Agent, bindings [][]byte, binding []byte) error {
+	sessionAgent, ok := agent.(upstream.SessionAgent)
+	if !ok {
+		return errors.New("upstream agent does not support SSH session bindings")
+	}
+	session, err := openBoundSession(ctx, sessionAgent, bindings)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = session.Close() }()
+	return bindAgentSession(ctx, session, binding)
+}
+
+func roundTripBoundAgent(ctx context.Context, agent upstream.Agent, bindings [][]byte, request []byte) ([]byte, error) {
+	sessionAgent, ok := agent.(upstream.SessionAgent)
+	if !ok {
+		return nil, errors.New("upstream agent cannot open a bound session")
+	}
+	session, err := openBoundSession(ctx, sessionAgent, bindings)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = session.Close() }()
+	return session.RoundTrip(ctx, request)
+}
+
+func openBoundSession(ctx context.Context, agent upstream.SessionAgent, bindings [][]byte) (upstream.AgentSession, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, upstreamRequestTimeout)
+	defer cancel()
+	session, err := agent.OpenSession(requestCtx)
+	if err != nil {
+		return nil, err
+	}
+	for i, binding := range bindings {
+		if err := session.Bind(requestCtx, binding); err != nil {
+			_ = session.Close()
+			return nil, fmt.Errorf("restore SSH session binding %d: %w", i+1, err)
+		}
+	}
+	return session, nil
+}
+
+func validateSelection(available, chosen []identity.Identity) error {
+	if len(chosen) > len(available) {
+		return errors.New("selector returned more identities than the upstream agent")
+	}
+	allowed := make(map[[sha256.Size]byte]struct{}, len(available))
+	for _, id := range available {
+		allowed[identity.Digest(id.Blob)] = struct{}{}
+	}
+	seen := make(map[[sha256.Size]byte]struct{}, len(chosen))
+	for _, id := range chosen {
+		digest := identity.Digest(id.Blob)
+		if _, ok := allowed[digest]; !ok {
+			return errors.New("selector returned an identity not offered by the upstream agent")
+		}
+		if _, ok := seen[digest]; ok {
+			return errors.New("selector returned a duplicate identity")
+		}
+		seen[digest] = struct{}{}
+	}
+	return nil
+}
+
+func validSignResponse(message []byte) bool {
+	if len(message) == 1 && message[0] == protocol.Failure {
+		return true
+	}
+	if len(message) < 5 || message[0] != protocol.SignResponse {
+		return false
+	}
+	n := uint64(message[1])<<24 | uint64(message[2])<<16 | uint64(message[3])<<8 | uint64(message[4])
+	return n == uint64(len(message)-5)
+}
+
+func cloneIdentities(identities []identity.Identity) []identity.Identity {
+	clone := make([]identity.Identity, len(identities))
+	for i, id := range identities {
+		clone[i] = id
+		clone[i].Blob = append([]byte(nil), id.Blob...)
+	}
+	return clone
+}
+
+func writeFailure(conn net.Conn) bool { return writeResponse(conn, []byte{protocol.Failure}) }
+
+func writeResponse(conn net.Conn, response []byte) bool {
+	return protocol.WriteFrame(conn, response) == nil
+}
+
+func newSessionID() string {
+	var raw [6]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "unknown"
+	}
+	return hex.EncodeToString(raw[:])
+}
+
+func (s *Server) logger() *slog.Logger {
+	if s.Logger != nil {
+		return s.Logger
+	}
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}

@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -56,6 +57,49 @@ func TestSSHHelpListsLogFileOption(t *testing.T) {
 	help := strings.Join(strings.Fields(stdout.String()), " ")
 	if !strings.Contains(help, "--log-file") {
 		t.Fatalf("ssh help does not list --log-file: %s", stdout.String())
+	}
+}
+
+func TestSSHRejectsSameEndpoint(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	endpoint := filepath.Join(directory, "missing", "agent.sock")
+	t.Setenv("SSH_AUTH_SOCK", "")
+	t.Setenv("UPSTREAM_SSH_AUTH_SOCK", "")
+	t.Setenv("SSH_KEYSELECT_TEST_ENDPOINT", endpoint)
+	// An invalid endpoint pair must be rejected before trying to launch OpenSSH.
+	t.Setenv("PATH", "")
+
+	tests := []struct {
+		name        string
+		listen      string
+		upstream    string
+		upstreamEnv string
+	}{
+		{name: "identical", listen: endpoint, upstream: endpoint},
+		{name: "relative listen", listen: filepath.Join("missing", "agent.sock"), upstream: endpoint},
+		{name: "relative upstream", listen: endpoint, upstream: filepath.Join("missing", "agent.sock")},
+		{name: "expanded listen", listen: "$SSH_KEYSELECT_TEST_ENDPOINT", upstream: endpoint},
+		{name: "expanded upstream", listen: endpoint, upstream: "$SSH_KEYSELECT_TEST_ENDPOINT"},
+		{name: "SSH_AUTH_SOCK", listen: endpoint, upstreamEnv: "SSH_AUTH_SOCK"},
+		{name: "UPSTREAM_SSH_AUTH_SOCK", listen: endpoint, upstreamEnv: "UPSTREAM_SSH_AUTH_SOCK"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := []string{"ssh", "--listen", tt.listen}
+			if tt.upstreamEnv != "" {
+				t.Setenv(tt.upstreamEnv, endpoint)
+			} else {
+				args = append(args, "--upstream", tt.upstream)
+			}
+			var stdout, stderr bytes.Buffer
+			if code := execute(args, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "listen and upstream endpoints must be different") {
+				t.Fatalf("ssh result = code %d, stderr %q", code, stderr.String())
+			}
+			if _, err := os.Lstat(filepath.Dir(endpoint)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("listen directory was created before rejecting the endpoints: %v", err)
+			}
+		})
 	}
 }
 

@@ -205,6 +205,10 @@ func executeSSH(options sshCommandOptions, stdout, stderr io.Writer) (exitCode i
 			return cmdutil.ReportError(stderr, commandName, err)
 		}
 	}
+	// Reject self-connections before binding can create or replace the upstream endpoint.
+	if sameEndpoint(listenPath, cfg.Agent.Upstream) {
+		return cmdutil.ReportError(stderr, commandName, errors.New("listen and upstream endpoints must be different"))
+	}
 	ln, cleanup, err := listener.ListenWithMode(listenPath, cfg.Agent.ListenMode)
 	if err != nil {
 		return cmdutil.ReportError(stderr, commandName, err)

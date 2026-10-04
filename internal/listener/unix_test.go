@@ -16,7 +16,7 @@ import (
 )
 
 func TestListenProtectsAndRemovesSocket(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "nested", "agent.sock")
+	path := filepath.Join(shortSocketTestDir(t), "nested", "agent.sock")
 	ln, cleanup, err := ListenWithMode(path, transport.Unix)
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestListenProtectsAndRemovesSocket(t *testing.T) {
 }
 
 func TestListenRemovesStaleSocket(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "agent.sock")
+	path := filepath.Join(shortSocketTestDir(t), "agent.sock")
 	stale, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
@@ -53,4 +53,15 @@ func TestListenRemovesStaleSocket(t *testing.T) {
 	}
 	defer cleanup()
 	_ = ln
+}
+
+// Short directory names keep Unix socket paths below platform limits.
+func shortSocketTestDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sk-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }

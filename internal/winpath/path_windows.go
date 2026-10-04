@@ -58,10 +58,10 @@ func CompatibleSocketPath(upstream, name string) (string, error) {
 // NativeSocketPath converts a Git Bash path to the native path expected by Winsock.
 func NativeSocketPath(path string) (string, error) {
 	if isDriveMountPath(path) {
-		return filepath.Clean(string(path[1]) + ":" + filepath.FromSlash(path[2:])), nil
+		return filepath.Clean(strings.ToUpper(path[1:2]) + ":" + filepath.FromSlash(path[2:])), nil
 	}
 	if isWSL1DriveMountPath(path) {
-		return filepath.Clean(string(path[5]) + ":" + filepath.FromSlash(path[6:])), nil
+		return filepath.Clean(strings.ToUpper(path[5:6]) + ":" + filepath.FromSlash(path[6:])), nil
 	}
 	if path == "/tmp" || strings.HasPrefix(path, "/tmp/") {
 		tempDir := os.Getenv("TEMP")

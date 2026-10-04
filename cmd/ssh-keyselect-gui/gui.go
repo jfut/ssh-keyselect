@@ -213,6 +213,13 @@ func serveWithGUI(
 				unison.AttemptQuit()
 				return
 			}
+			windowHiddenToTray := false
+			guiSelector.SetSelectionDismissedCallback(func() {
+				if windowHiddenToTray && window.IsValid() {
+					// Modal completion can reactivate the main window; restore the tray-hidden state afterward.
+					window.Hide()
+				}
+			})
 			if icons, iconErr := guiassets.TitleIcons(); iconErr != nil {
 				logger.Warn("create application icon", "error", iconErr)
 			} else {
@@ -544,6 +551,7 @@ func serveWithGUI(
 				showWindow := func() {
 					unison.InvokeTask(func() {
 						if window.IsValid() {
+							windowHiddenToTray = false
 							if window.IsMinimized() {
 								window.Minimize()
 							}
@@ -562,6 +570,7 @@ func serveWithGUI(
 					updateTrayTooltip = tooltipUpdater
 					window.MinimizedCallback = func(minimized bool) {
 						if minimized {
+							windowHiddenToTray = true
 							window.Hide()
 						}
 					}

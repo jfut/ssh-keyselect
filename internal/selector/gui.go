@@ -28,12 +28,13 @@ import (
 
 // GUISelector shows a floating Unison window for each identity choice.
 type GUISelector struct {
-	queue     chan struct{}
-	stopped   chan struct{}
-	initOnce  sync.Once
-	stopOnce  sync.Once
-	refreshMu sync.RWMutex
-	refresh   func(context.Context) ([]identity.Identity, error)
+	queue              chan struct{}
+	stopped            chan struct{}
+	initOnce           sync.Once
+	stopOnce           sync.Once
+	callbackMu         sync.RWMutex
+	refresh            func(context.Context) ([]identity.Identity, error)
+	selectionDismissed func()
 }
 
 // NewGUISelector creates a selector that must be used after Unison.Start begins.
@@ -43,15 +44,28 @@ func NewGUISelector() *GUISelector {
 
 // SetRefreshCallback supplies the upstream identity listing used by the picker's Refresh Keys button.
 func (s *GUISelector) SetRefreshCallback(refresh func(context.Context) ([]identity.Identity, error)) {
-	s.refreshMu.Lock()
+	s.callbackMu.Lock()
 	s.refresh = refresh
-	s.refreshMu.Unlock()
+	s.callbackMu.Unlock()
+}
+
+// SetSelectionDismissedCallback runs callback on the UI thread after a picker closes.
+func (s *GUISelector) SetSelectionDismissedCallback(callback func()) {
+	s.callbackMu.Lock()
+	s.selectionDismissed = callback
+	s.callbackMu.Unlock()
 }
 
 func (s *GUISelector) refreshCallback() func(context.Context) ([]identity.Identity, error) {
-	s.refreshMu.RLock()
-	defer s.refreshMu.RUnlock()
+	s.callbackMu.RLock()
+	defer s.callbackMu.RUnlock()
 	return s.refresh
+}
+
+func (s *GUISelector) selectionDismissedCallback() func() {
+	s.callbackMu.RLock()
+	defer s.callbackMu.RUnlock()
+	return s.selectionDismissed
 }
 
 // Stop cancels pending selection requests when the GUI application is closing.
@@ -113,6 +127,9 @@ func (s *GUISelector) SelectWithContext(ctx context.Context, identities []identi
 		})
 		response := window.RunModal()
 		stopClose()
+		if callback := s.selectionDismissedCallback(); callback != nil {
+			callback()
+		}
 		selectedIdentity, selected := chosenIdentity()
 		if err := ctx.Err(); err != nil {
 			result <- guiSelectionResult{err: err}

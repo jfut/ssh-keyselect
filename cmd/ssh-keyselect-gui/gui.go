@@ -289,8 +289,8 @@ func serveWithGUI(
 			keyTitleGroup.SetLayout(&unison.FlexLayout{Columns: 2, HSpacing: 8, VAlign: align.Middle})
 			keyTitleGroup.AddChild(newGUISectionBadge("Keys", guiKeysBadgeFill, guiKeysBadgeInk))
 			keysStatus := unison.NewLabel()
-			keysStatus.SetTitle("Upstream not configured")
 			keysStatus.Font = guiFont(9, false)
+			keysStatus.SetTitle("Upstream not configured")
 			keysStatus.OnBackgroundInk = guiMutedInk
 			keysStatus.SetLayoutData(&unison.FlexLayoutData{
 				VAlign: align.Middle, MinSize: geom.NewSize(200, 0), SizeHint: geom.NewSize(200, 0),

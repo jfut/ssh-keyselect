@@ -165,7 +165,7 @@ func guiSetMessagePanelRegularFonts(panel *unison.Panel) {
 			continue
 		}
 		title := label.String()
-		label.Font = guiFont(label.Font.Size(), false)
+		label.Font = unison.LabelFont.Face().Font(label.Font.Size())
 		label.SetTitle(title)
 	}
 }
@@ -579,9 +579,9 @@ func newGUIEndpointConfigGroup(title string) *unison.Panel {
 	group := newGUIStatusCard()
 	group.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
 	heading := unison.NewLabel()
-	heading.SetTitle(title)
-	heading.Font = guiFont(11, true)
+	heading.Font = guiFont(10, false)
 	heading.OnBackgroundInk = guiTextInk
+	heading.SetTitle(title)
 	group.AddChild(heading)
 	return group
 }
@@ -641,9 +641,9 @@ func guiNewTransportModePopup(current transport.Mode, includeAutomatic bool) *un
 
 func addGUIConfigRow(panel *unison.Panel, title string, control unison.Paneler) {
 	label := unison.NewLabel()
-	label.SetTitle(title)
-	label.Font = guiFont(11, true)
+	label.Font = guiFont(10, false)
 	label.OnBackgroundInk = guiTextInk
+	label.SetTitle(title)
 	panel.AddChild(label)
 	control.AsPanel().SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
 	panel.AddChild(control)

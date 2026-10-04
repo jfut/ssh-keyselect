@@ -19,6 +19,21 @@ import (
 
 var accentInk = unison.RGB(24, 112, 222)
 
+// Keep the smaller font families close to the previous CJK fonts' visual size.
+const fontSizeScale = float32(0.9)
+
+// ConfigureFonts also scales widgets that use Unison's default fonts, such as
+// settings fields, tooltips, and messages, before their text is created.
+func ConfigureFonts() {
+	regular := Font(10, false)
+	unison.SystemFont.Font = regular
+	unison.EmphasizedSystemFont.Font = Font(10, true)
+	unison.LabelFont.Font = regular
+	unison.FieldFont.Font = regular
+	unison.KeyboardFont.Font = regular
+	unison.MonospacedFont.Font = MonospacedFont(10)
+}
+
 // Font keeps the mostly Latin UI on a small sans-serif face. Unison loads fallback
 // faces for missing glyphs when needed, instead of retaining CJK faces at startup.
 func Font(size float32, emphasized bool) unison.Font {
@@ -29,7 +44,12 @@ func Font(size float32, emphasized bool) unison.Font {
 	case "darwin":
 		family = "Helvetica Neue"
 	}
-	return fontFromFamily(family, size, emphasized)
+	return fontFromFamily(family, size*fontSizeScale, emphasized)
+}
+
+// MonospacedFont applies the same compact size to paths and selection details.
+func MonospacedFont(size float32) unison.Font {
+	return unison.MonospacedFont.Face().Font(size * fontSizeScale)
 }
 
 // StyleAccentButton applies the shared primary-action colors and padding.

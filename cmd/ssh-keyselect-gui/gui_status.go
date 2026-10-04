@@ -52,6 +52,7 @@ var guiMenuInk = unison.RGB(255, 255, 255)
 
 // configureGUIAppearance keeps the menu and status window on the same light theme.
 func configureGUIAppearance() {
+	guistyle.ConfigureFonts()
 	unison.ThemeSurface.Light = guiWindowInk
 	unison.ThemeSurface.Dark = guiWindowInk
 	unison.DefaultMenuItemTheme.BackgroundColor = guiMenuInk
@@ -123,12 +124,12 @@ func showGUIAboutDialog() {
 	brandDetails := unison.NewPanel()
 	brandDetails.SetLayout(&unison.FlexLayout{Columns: 1, VSpacing: 2})
 	name := unison.NewLabel()
+	name.Font = guiFont(10, false)
 	name.SetTitle(branding.Name)
-	name.Font = guiFont(14, true)
 	subtitle := unison.NewLabel()
-	subtitle.SetTitle(branding.Subtitle)
 	subtitle.Font = guiFont(10, false)
 	subtitle.OnBackgroundInk = guiMutedInk
+	subtitle.SetTitle(branding.Subtitle)
 	brandDetails.AddChild(name)
 	brandDetails.AddChild(subtitle)
 	brandDetails.SetLayoutData(&unison.FlexLayoutData{VAlign: align.Middle})
@@ -293,7 +294,7 @@ func newGUITextBadge(title string) *unison.Panel {
 		geom.Insets{Top: 2, Left: 5, Bottom: 2, Right: 5})
 }
 
-// newGUISectionBadge replaces a section icon and heading with one colored text label.
+// newGUISectionBadge renders section headings as colored labels with the bold GUI font.
 func newGUISectionBadge(title string, fill, ink unison.Ink) *unison.Panel {
 	return newGUIColoredLabel(title, fill, ink, 10.5, true,
 		geom.Insets{Top: 3, Left: 7, Bottom: 3, Right: 7})
@@ -348,7 +349,7 @@ func guiAddConnectionModeRow(card *unison.Panel, markerInk, modeFill, modeInk un
 		canvas.DrawRoundedRect(rect, geom.NewUniformSize(7), guiInputInk.Paint(canvas, rect, paintstyle.Fill))
 	}
 	pathLabel := unison.NewLabel()
-	pathLabel.Font = unison.MonospacedFont.Face().Font(9.5)
+	pathLabel.Font = guistyle.MonospacedFont(9.5)
 	pathLabel.OnBackgroundInk = guiTextInk
 	pathLabel.SetLayoutData(&unison.FlexLayoutData{SizeHint: geom.NewSize(340, 0)})
 	pathPanel.AddChild(pathLabel)

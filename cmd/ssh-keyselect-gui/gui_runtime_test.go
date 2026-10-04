@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -29,8 +30,14 @@ func TestGUIRuntimeRunsWithoutUpstreamAndAppliesEndpointChanges(t *testing.T) {
 	defer guiSelector.Stop()
 	server := &agentproxy.Server{Agent: endpointAgent, Selector: guiSelector}
 
-	firstListen := filepath.Join(t.TempDir(), "first.sock")
-	secondListen := filepath.Join(t.TempDir(), "second.sock")
+	// Keep socket paths short enough for macOS Unix socket path limits.
+	testDir, err := os.MkdirTemp("", "sk-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(testDir) })
+	firstListen := filepath.Join(testDir, "first.sock")
+	secondListen := filepath.Join(testDir, "second.sock")
 	runtime := &guiRuntime{
 		ctx: ctx, server: server, agent: endpointAgent, loggerOutput: io.Discard,
 		listenPath: firstListen, listenMode: transport.Unix, currentLogLevel: "off",
@@ -49,7 +56,7 @@ func TestGUIRuntimeRunsWithoutUpstreamAndAppliesEndpointChanges(t *testing.T) {
 		t.Fatalf("GUI proxy did not listen without an upstream agent: %v", err)
 	}
 
-	cfg.Agent.Upstream = filepath.Join(t.TempDir(), "upstream.sock")
+	cfg.Agent.Upstream = filepath.Join(testDir, "upstream.sock")
 	cfg.Agent.UpstreamMode = transport.Unix
 	cfg.Agent.Listen = secondListen
 	if path, _, err := runtime.Apply(cfg); err != nil {

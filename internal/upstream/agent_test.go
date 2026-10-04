@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -15,7 +16,13 @@ import (
 )
 
 func TestAgentSessionKeepsBindingsAndRequestsOnOneConnection(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "agent.sock")
+	// Keep the socket path short enough for Unix socket limits on macOS and Windows.
+	dir, err := os.MkdirTemp("", "sk-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	path := filepath.Join(dir, "agent.sock")
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)

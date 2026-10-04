@@ -26,6 +26,10 @@ import (
 
 const (
 	upstreamRequestTimeout = 10 * time.Second
+
+	// Bound frontend resources even when forwarded clients leave connections open.
+	maxClientConnections   = 128
+	clientFrameReadTimeout = 10 * time.Second
 )
 
 // Server serves SSH agent requests while isolating authorization state per client connection.
@@ -51,42 +55,61 @@ func (s *Server) AutoSelect() bool {
 	return s.autoSelect
 }
 
-type packetResult struct {
-	message []byte
-	err     error
-}
-
 // Serve accepts frontend connections until ctx is cancelled or the listener fails.
 func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
+	return s.serve(ctx, listener, maxClientConnections, clientFrameReadTimeout)
+}
+
+// serve lets tests use fewer connections and shorter deadlines without changing production limits.
+func (s *Server) serve(ctx context.Context, listener net.Listener, connectionLimit int, frameReadTimeout time.Duration) error {
 	if s.Agent == nil || s.Selector == nil || listener == nil {
 		return errors.New("agent proxy is not fully configured")
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	logger := s.logger()
 	var mu sync.Mutex
 	active := make(map[net.Conn]struct{})
 	var handlers sync.WaitGroup
-	stopShutdown := context.AfterFunc(ctx, func() {
+	shutdown := func() {
 		_ = listener.Close()
 		mu.Lock()
 		for conn := range active {
 			_ = conn.Close()
 		}
 		mu.Unlock()
-	})
-	defer stopShutdown()
+	}
+	stopShutdown := context.AfterFunc(ctx, shutdown)
+	defer func() {
+		// Listener failures must also cancel pickers and release every client.
+		cancel()
+		stopShutdown()
+		shutdown()
+		handlers.Wait()
+	}()
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
-				break
+				return nil
 			}
 			return fmt.Errorf("accept frontend connection: %w", err)
 		}
-		sessionID := newSessionID()
 		mu.Lock()
+		if ctx.Err() != nil {
+			mu.Unlock()
+			_ = conn.Close()
+			return nil
+		}
+		if len(active) >= connectionLimit {
+			mu.Unlock()
+			_ = conn.Close()
+			logger.Warn("rejected client connection at connection limit", "limit", connectionLimit)
+			continue
+		}
 		active[conn] = struct{}{}
 		mu.Unlock()
+		sessionID := newSessionID()
 		handlers.Add(1)
 		go func() {
 			defer handlers.Done()
@@ -101,40 +124,51 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 					logger.Error("client handler recovered from panic", "session", sessionID)
 				}
 			}()
-			s.handleConnection(ctx, conn, sessionID, logger)
+			s.handleConnection(ctx, conn, sessionID, logger, frameReadTimeout)
 		}()
 	}
-	mu.Lock()
-	for conn := range active {
-		_ = conn.Close()
-	}
-	mu.Unlock()
-	handlers.Wait()
-	return nil
 }
 
-func (s *Server) handleConnection(parent context.Context, conn net.Conn, sessionID string, logger *slog.Logger) {
+func (s *Server) handleConnection(parent context.Context, conn net.Conn, sessionID string, logger *slog.Logger, frameReadTimeout time.Duration) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	log := logger.With("session", sessionID)
 	log.Info("client connected")
 	defer log.Info("client disconnected")
 
-	packets := make(chan packetResult, 1)
+	packets := make(chan []byte, 1)
+	readerDone := make(chan struct{})
 	go func() {
+		defer func() {
+			// Every reader exit cancels the picker and unblocks response writes.
+			cancel()
+			_ = conn.Close()
+			close(readerDone)
+		}()
 		for {
-			message, err := protocol.ReadFrame(conn)
-			result := packetResult{message: message, err: err}
-			select {
-			case packets <- result:
-			case <-ctx.Done():
+			message, err := readClientFrame(conn, frameReadTimeout)
+			if err != nil {
+				if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) && ctx.Err() == nil {
+					log.Debug("client sent an invalid or incomplete agent frame")
+				}
 				return
 			}
-			if err != nil {
-				cancel()
+			select {
+			case packets <- message:
+			case <-ctx.Done():
+				return
+			default:
+				// Never stop watching the client while a request is awaiting selection.
+				log.Warn("rejected excessive pending agent requests")
 				return
 			}
 		}
+	}()
+	defer func() {
+		// Keep the connection slot occupied until its reader has also stopped.
+		cancel()
+		_ = conn.Close()
+		<-readerDone
 	}()
 
 	var cached []identity.Identity
@@ -156,19 +190,13 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 		select {
 		case <-ctx.Done():
 			return
-		case result := <-packets:
-			if result.err != nil {
-				if !errors.Is(result.err, io.EOF) && !errors.Is(result.err, net.ErrClosed) && ctx.Err() == nil {
-					log.Debug("client sent an invalid or incomplete agent frame")
-				}
+		case message := <-packets:
+			if len(message) == 0 {
 				return
 			}
-			if len(result.message) == 0 {
-				return
-			}
-			switch result.message[0] {
+			switch message[0] {
 			case protocol.RequestIdentities:
-				if len(result.message) != 1 {
+				if len(message) != 1 {
 					return
 				}
 				if !identitiesCached {
@@ -213,7 +241,7 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 					continue
 				}
 				sessionBindRequests++
-				binding, err := verifySessionBind(result.message)
+				binding, err := verifySessionBind(message)
 				if err != nil {
 					log.Warn("rejected unsupported or invalid agent extension", "error", err)
 					if !writeFailure(conn) {
@@ -265,7 +293,7 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 					return
 				}
 			case protocol.SignRequest:
-				keyBlob, _, _, err := protocol.ParseSignRequest(result.message)
+				keyBlob, _, _, err := protocol.ParseSignRequest(message)
 				if err != nil {
 					return
 				}
@@ -286,9 +314,9 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 				log.Info("signature requested", "fingerprint", identity.Fingerprint(keyBlob))
 				var response []byte
 				if len(upstreamSessionBinds) > 0 {
-					response, err = roundTripBoundAgent(ctx, s.Agent, upstreamSessionBinds, result.message)
+					response, err = roundTripBoundAgent(ctx, s.Agent, upstreamSessionBinds, message)
 				} else {
-					response, err = s.Agent.RoundTrip(ctx, result.message)
+					response, err = s.Agent.RoundTrip(ctx, message)
 				}
 				if err != nil {
 					if ctx.Err() != nil {
@@ -308,7 +336,7 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 				}
 			default:
 				// Reject management and unknown requests to keep the proxy read/sign-only.
-				log.Warn("rejected unsupported agent request", "request_type", result.message[0])
+				log.Warn("rejected unsupported agent request", "request_type", message[0])
 				if !writeFailure(conn) {
 					return
 				}
@@ -316,6 +344,26 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 			}
 		}
 	}
+}
+
+func readClientFrame(conn net.Conn, timeout time.Duration) ([]byte, error) {
+	// Idle sockets may wait for user selection or later forwarded SSH sessions.
+	// Start one absolute deadline only after the client begins sending a frame.
+	var first [1]byte
+	if _, err := io.ReadFull(conn, first[:]); err != nil {
+		return nil, err
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, err
+	}
+	message, err := protocol.ReadFrame(io.MultiReader(bytes.NewReader(first[:]), conn))
+	if err != nil {
+		return nil, err
+	}
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		return nil, err
+	}
+	return message, nil
 }
 
 func (s *Server) selectIdentities(ctx context.Context, logger *slog.Logger, requestContext selector.SelectionContext) ([]identity.Identity, error) {

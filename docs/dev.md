@@ -1,6 +1,6 @@
 # Developer notes
 
-`README.md` is the source of truth for user-visible CLI, output, configuration, and security behavior. This document covers package boundaries, implementation details, development commands, and release procedures.
+`README.md` is the source of truth for user-visible CLI, output, configuration, and security guidance. This document covers package boundaries, implementation details including internal safeguards and resource limits, development commands, and release procedures.
 
 ## Architecture
 
@@ -111,6 +111,16 @@ OpenSSH records session bindings for the lifetime of an agent connection and rej
 
 The selected key digests stay authorized until the binding chain changes or the listen-socket connection closes. Later signing requests for a selected key in the same chain do not open another picker; requests for unselected keys are rejected. The repeated `RequestIdentities` branch covers clients that query again on the same agent socket. OpenSSH's usual authentication flow fetches the list while preparing public-key authentication; it does not poll periodically while an SSH session is idle ([OpenSSH source](https://github.com/openssh/openssh-portable/blob/master/sshconnect2.c#L1543-L1571)).
 
+### Frontend resource limits
+
+Each proxy listener allows up to 128 concurrent client connections; additional connections are closed immediately. Admission counts each connection until both its request handler and frame reader have stopped.
+
+Once a client starts sending an agent frame, it must finish within 10 seconds or the connection is closed. The read deadline starts after the first frame byte, is not extended by partial reads, and is cleared after a complete frame. It does not limit idle connections or time spent choosing a key.
+
+Clients should wait for each response before sending another request. The frame reader runs separately so a disconnect or an incomplete-frame timeout can cancel an open picker. It queues at most one complete request and closes the client if another arrives while the queue is full, so delivery to the handler never blocks client monitoring.
+
+Every reader exit cancels the connection context and closes the frontend socket to stop the picker and unblock response writes. Shutdown cancels pickers, closes frontend sockets, and waits for handlers and readers even when the listener fails.
+
 ### Windows endpoint implementation
 
 The `cygwin` transport reads the socket file's endpoint information and connects through loopback TCP using the file's GUID handshake. The `wsl1` transport uses Windows AF_UNIX sockets with paths translated from `/mnt/<drive>/...`. The `named-pipe` mode uses Windows OpenSSH named pipes. Native Windows and shell-specific defaults are implemented in platform-suffixed files under `internal/listener`, `internal/upstream`, `internal/winpath`, and `cmd/ssh-keyselect-gui`.
@@ -154,6 +164,10 @@ just snapshot
 ```
 
 `just test` runs the non-GUI suite and the GUI-tagged tests. For focused work, use `go test ./path/to/package` and `go test -tags gui ./path/to/package`. Tests requiring OpenSSH binaries or platform transports are environment or OS specific.
+
+Frontend connection-limit tests pass a cap of four connections to the shared serving implementation. This exercises admission, rejection, and slot reuse through real sockets without exhausting small file-descriptor budgets, while production `Serve` allows up to 128 connections.
+
+Frontend timeout tests pass a 200 ms frame deadline to the shared serving and connection-handling implementation, so they exercise cancellation and socket cleanup without waiting for the production `Serve` deadline of 10 seconds. Each test supplies its own limits; no global limits are changed.
 
 Run `just deps-credits` after changing Go dependencies or the supported target operating systems. It installs a pinned `go-licenses` into a temporary directory, scans Linux, macOS, and Windows builds with the GUI tag, and regenerates `internal/credits/dependencies.txt` and `CREDITS`. The scanner is used because it can report GUI-tagged and platform-specific imports in each build. Check the output for newly introduced or changed licenses. The generated `CREDITS` includes third-party license texts and the licenses for fonts embedded by Unison.
 

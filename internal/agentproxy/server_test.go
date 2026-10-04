@@ -4,9 +4,11 @@
 package agentproxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -304,6 +306,399 @@ func TestConcurrentSessionsDoNotShareSelectedKeys(t *testing.T) {
 	}
 }
 
+func TestServeLimitsClientConnectionsAndReusesClosedSlots(t *testing.T) {
+	// Exercise saturation through real sockets without exhausting small FD budgets.
+	const connectionLimit = 4
+	endpoint, _ := startProxyTestServer(t, &Server{Agent: &fakeAgent{}, Selector: &selecting{}}, connectionLimit, clientFrameReadTimeout)
+	clients := make([]net.Conn, 0, connectionLimit)
+	for range connectionLimit {
+		client := dialProxyTestClient(t, endpoint)
+		// A response confirms admission before the next connection is opened.
+		_ = request(t, client, []byte{protocol.RequestIdentities})
+		clients = append(clients, client)
+	}
+	excess := dialProxyTestClient(t, endpoint)
+	requireProxyClientClosed(t, excess)
+
+	if err := clients[1].SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	_ = request(t, clients[1], []byte{protocol.RequestIdentities})
+	_ = clients[0].Close()
+
+	// Disconnect cleanup is asynchronous; retry until its slot is released.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		client := dialProxyTestClient(t, endpoint)
+		err := protocol.WriteFrame(client, []byte{protocol.RequestIdentities})
+		if err == nil {
+			var response []byte
+			response, err = protocol.ReadFrame(client)
+			if err == nil {
+				if !bytes.Equal(response, []byte{protocol.IdentitiesAnswer, 0, 0, 0, 0}) {
+					t.Fatalf("response after slot reuse = %x, want empty identities", response)
+				}
+				return
+			}
+		}
+		_ = client.Close()
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("closed connection slot was not made available")
+}
+
+func TestOnePendingRequestSurvivesPickerWait(t *testing.T) {
+	chooser := &blockingSelecting{started: make(chan struct{}), release: make(chan struct{})}
+	agent := &fakeAgent{identities: []identity.Identity{proxyTestIdentity("alpha")}}
+	_, client, cleanup := newPipeSession(t, agent, chooser)
+	defer cleanup()
+	if err := client.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteFrame(client, []byte{protocol.RequestIdentities}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-chooser.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("identity picker did not open")
+	}
+	// One complete request may wait while the first request is in the picker.
+	if err := protocol.WriteFrame(client, []byte{protocol.RequestIdentities}); err != nil {
+		t.Fatal(err)
+	}
+	close(chooser.release)
+	for range 2 {
+		response, err := protocol.ReadFrame(client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids, err := protocol.ParseIdentities(response)
+		if err != nil || len(ids) != 1 || ids[0].Comment != "alpha" {
+			t.Fatalf("queued identities = %+v, %v; want alpha", ids, err)
+		}
+	}
+}
+
+func TestServeClosesExcessivePendingRequestsDuringPicker(t *testing.T) {
+	const connectionLimit = 4
+	cases := []struct {
+		name       string
+		partial    []byte
+		disconnect bool
+	}{
+		{name: "open client"},
+		{name: "partial header", partial: []byte{0}},
+		{name: "partial body", partial: []byte{0, 16, 0, 0}},
+		{name: "disconnected client", disconnect: true},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			chooser := &blockingSelecting{started: make(chan struct{}), release: make(chan struct{})}
+			endpoint, _ := startProxyTestServer(t, &Server{
+				Agent:    &fakeAgent{identities: []identity.Identity{proxyTestIdentity("alpha")}},
+				Selector: chooser,
+			}, connectionLimit, clientFrameReadTimeout)
+			if test.disconnect {
+				// Leave one slot for the abusive client to verify that it is reclaimed.
+				for range connectionLimit - 1 {
+					idle := dialProxyTestClient(t, endpoint)
+					_ = request(t, idle, []byte{protocol.RemoveAllIdentity})
+				}
+			}
+			client := dialProxyTestClient(t, endpoint)
+			if err := protocol.WriteFrame(client, []byte{protocol.RequestIdentities}); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-chooser.started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("identity picker did not open")
+			}
+			if err := protocol.WriteFrame(client, []byte{protocol.RequestIdentities}); err != nil {
+				t.Fatal(err)
+			}
+			// Overflow closes the transport, so writes racing that close may fail.
+			_ = protocol.WriteFrame(client, []byte{protocol.RequestIdentities})
+			if len(test.partial) > 0 {
+				_, _ = client.Write(test.partial)
+			}
+			if !test.disconnect {
+				// The client deadline is shorter than the ten-second frame deadline.
+				requireProxyClientClosed(t, client)
+				return
+			}
+			_ = client.Close()
+			// A usable new connection proves that the picker, reader, and slot were released.
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				fresh := dialProxyTestClient(t, endpoint)
+				err := protocol.WriteFrame(fresh, []byte{protocol.RemoveAllIdentity})
+				if err == nil {
+					var response []byte
+					response, err = protocol.ReadFrame(fresh)
+					if err == nil {
+						if !bytes.Equal(response, []byte{protocol.Failure}) {
+							t.Fatalf("response after overflow slot reuse = %x, want SSH_AGENT_FAILURE", response)
+						}
+						return
+					}
+				}
+				_ = fresh.Close()
+				time.Sleep(10 * time.Millisecond)
+			}
+			t.Fatal("disconnected pipelined client retained its connection slot")
+		})
+	}
+}
+
+func TestServeClosesIncompleteFramesWhilePickerIsWaiting(t *testing.T) {
+	t.Parallel()
+	const timeout = 200 * time.Millisecond
+	chooser := &blockingSelecting{started: make(chan struct{}), release: make(chan struct{})}
+	endpoint, _ := startProxyTestServer(t, &Server{
+		Agent:    &fakeAgent{identities: []identity.Identity{proxyTestIdentity("alpha")}},
+		Selector: chooser,
+	}, maxClientConnections, timeout)
+	bodyClient := dialProxyTestClient(t, endpoint)
+	if err := protocol.WriteFrame(bodyClient, []byte{protocol.RequestIdentities}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-chooser.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("identity picker did not open")
+	}
+	// A full pending-request queue must not stop the next frame's deadline.
+	if err := protocol.WriteFrame(bodyClient, []byte{protocol.RequestIdentities}); err != nil {
+		t.Fatal(err)
+	}
+	headerClient := dialProxyTestClient(t, endpoint)
+	clients := []struct {
+		name    string
+		conn    net.Conn
+		partial []byte
+	}{
+		{name: "partial header", conn: headerClient, partial: []byte{0}},
+		// Declare the largest allowed body, then withhold it while the picker waits.
+		{name: "partial body", conn: bodyClient, partial: []byte{0, 16, 0, 0}},
+	}
+	for _, client := range clients {
+		if err := client.conn.SetDeadline(time.Now().Add(timeout + time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.conn.Write(client.partial); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, client := range clients {
+		t.Run(client.name, func(t *testing.T) { requireProxyClientClosed(t, client.conn) })
+	}
+	client := dialProxyTestClient(t, endpoint)
+	if response := request(t, client, []byte{protocol.RemoveAllIdentity}); !bytes.Equal(response, []byte{protocol.Failure}) {
+		t.Fatalf("response after read timeouts = %x, want SSH_AGENT_FAILURE", response)
+	}
+}
+
+func TestIncompleteFrameTimeoutUnblocksResponseWrites(t *testing.T) {
+	t.Parallel()
+	const timeout = 200 * time.Millisecond
+	serverConn, client := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	proxy := &Server{Agent: &fakeAgent{}, Selector: &selecting{}}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		proxy.handleConnection(ctx, serverConn, "blocked-write", proxy.logger(), timeout)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		_ = client.Close()
+		_ = serverConn.Close()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("connection handler did not stop")
+		}
+	})
+	if err := client.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetReadDeadline(time.Now().Add(timeout + time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteFrame(client, []byte{protocol.RequestIdentities}); err != nil {
+		t.Fatal(err)
+	}
+	// net.Pipe blocks the response until it is read; only send a partial next frame.
+	if _, err := client.Write([]byte{0}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(timeout + time.Second):
+		t.Fatal("incomplete frame timeout left the response writer blocked")
+	}
+	requireProxyClientClosed(t, client)
+}
+
+func TestClientFrameDeadlineIsNotExtendedByPartialReads(t *testing.T) {
+	server, client := net.Pipe()
+	defer func() { _ = server.Close() }()
+	defer func() { _ = client.Close() }()
+	if err := client.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	const timeout = 200 * time.Millisecond
+	result := make(chan error, 1)
+	go func() {
+		defer func() { _ = server.Close() }()
+		_, err := readClientFrame(server, timeout)
+		result <- err
+	}()
+	if _, err := client.Write([]byte{0, 0, 4, 0}); err != nil {
+		t.Fatal(err)
+	}
+	// Keep making progress without completing the body to exercise slow senders.
+	dripDone := make(chan struct{})
+	go func() {
+		defer close(dripDone)
+		ticker := time.NewTicker(timeout / 4)
+		defer ticker.Stop()
+		for range ticker.C {
+			if _, err := client.Write([]byte{0}); err != nil {
+				return
+			}
+		}
+	}()
+	defer func() {
+		_ = client.Close()
+		<-dripDone
+	}()
+	select {
+	case err := <-result:
+		var netErr net.Error
+		if !errors.As(err, &netErr) || !netErr.Timeout() {
+			t.Fatalf("incomplete frame error = %v, want a read timeout", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("partial reads extended the frame deadline")
+	}
+}
+
+func TestClientFrameDeadlineAllowsIdleBetweenFrames(t *testing.T) {
+	server, client := net.Pipe()
+	defer func() { _ = server.Close() }()
+	defer func() { _ = client.Close() }()
+	if err := client.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	const timeout = 100 * time.Millisecond
+	results := make(chan error, 2)
+	go func() {
+		for range 2 {
+			message, err := readClientFrame(server, timeout)
+			if err == nil && !bytes.Equal(message, []byte{protocol.RequestIdentities}) {
+				err = fmt.Errorf("idle client frame = %x, want SSH_AGENTC_REQUEST_IDENTITIES", message)
+			}
+			results <- err
+			if err != nil {
+				return
+			}
+		}
+	}()
+	for range 2 {
+		// Both the first request and later idle periods may outlast a frame deadline.
+		time.Sleep(2 * timeout)
+		if err := protocol.WriteFrame(client, []byte{protocol.RequestIdentities}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatalf("read frame after idle wait: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("idle client frame was not read")
+		}
+	}
+}
+
+func TestServeCancelsClientsWhenListenerFails(t *testing.T) {
+	chooser := &blockingSelecting{started: make(chan struct{}), release: make(chan struct{})}
+	endpoint, serveResult := startProxyTestServer(t, &Server{
+		Agent:    &fakeAgent{identities: []identity.Identity{proxyTestIdentity("alpha")}},
+		Selector: chooser,
+	}, maxClientConnections, clientFrameReadTimeout)
+	client := dialProxyTestClient(t, endpoint)
+	if err := protocol.WriteFrame(client, []byte{protocol.RequestIdentities}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-chooser.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("identity picker did not open")
+	}
+	if err := endpoint.listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-serveResult:
+		if err == nil {
+			t.Fatalf("Serve error = %v, want the listener error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener failure left a picker or reader running")
+	}
+	requireProxyClientClosed(t, client)
+}
+
+// startProxyTestServer exercises admission and cleanup through the real platform transport.
+func startProxyTestServer(t *testing.T, server *Server, connectionLimit int, frameReadTimeout time.Duration) (*integrationEndpoint, <-chan error) {
+	t.Helper()
+	endpoint := newIntegrationEndpoint(t, "frontend")
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		result <- server.serve(ctx, endpoint.listener, connectionLimit, frameReadTimeout)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		endpoint.cleanup()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("proxy Serve did not stop")
+		}
+	})
+	return endpoint, result
+}
+
+func dialProxyTestClient(t *testing.T, endpoint *integrationEndpoint) net.Conn {
+	t.Helper()
+	client, err := endpoint.dial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if err := client.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
+func requireProxyClientClosed(t *testing.T, client net.Conn) {
+	t.Helper()
+	var data [1]byte
+	n, err := client.Read(data[:])
+	var netErr net.Error
+	if n != 0 || err == nil || (errors.As(err, &netErr) && netErr.Timeout()) {
+		t.Fatalf("client read = %d, %v; want the proxy to close the connection", n, err)
+	}
+}
+
 func newPipeSession(t *testing.T, agent *fakeAgent, chooser selector.Selector) (*Server, net.Conn, func()) {
 	t.Helper()
 	serverConn, clientConn := net.Pipe()
@@ -317,7 +712,7 @@ func newPipeSession(t *testing.T, agent *fakeAgent, chooser selector.Selector) (
 	go func() {
 		defer close(done)
 		defer func() { _ = serverConn.Close() }()
-		server.handleConnection(ctx, serverConn, "test", server.Logger)
+		server.handleConnection(ctx, serverConn, "test", server.Logger, clientFrameReadTimeout)
 	}()
 	cleanup := func() {
 		cancel()

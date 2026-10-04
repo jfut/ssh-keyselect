@@ -93,11 +93,12 @@ func DisplayBitSize(blob []byte, algorithm string) string {
 	return "—"
 }
 
-// DisplayComment removes terminal control characters before public comments are rendered.
+// DisplayComment replaces terminal and bidirectional controls with spaces before rendering public text.
 func DisplayComment(comment string) string {
 	comment = strings.ToValidUTF8(comment, "�")
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		// Bidi controls can disguise comments or reorder surrounding UI text without visible glyphs.
+		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
 			return ' '
 		}
 		return r

@@ -5,6 +5,7 @@ package identity
 
 import (
 	"encoding/hex"
+	"fmt"
 	"testing"
 )
 
@@ -34,5 +35,28 @@ func TestNewRejectsEmptyAlgorithm(t *testing.T) {
 func TestDisplayCommentReplacesControlsAndInvalidUTF8(t *testing.T) {
 	if got, want := DisplayComment("key\x1b[31m\nname\xff"), "key [31m name�"; got != want {
 		t.Fatalf("DisplayComment() = %q, want %q", got, want)
+	}
+}
+
+func TestDisplayCommentReplacesBidirectionalControls(t *testing.T) {
+	// Cover directional marks, embeddings, overrides, and isolates, including unpaired controls.
+	for _, control := range []rune{
+		'\u061c', '\u200e', '\u200f',
+		'\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
+		'\u2066', '\u2067', '\u2068', '\u2069',
+	} {
+		t.Run(fmt.Sprintf("U+%04X", control), func(t *testing.T) {
+			if got, want := DisplayComment("work"+string(control)+"key"), "work key"; got != want {
+				t.Fatalf("DisplayComment() = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestDisplayCommentPreservesUnicodeText(t *testing.T) {
+	// Ordinary RTL text, combining marks, and joiners must keep their spelling and glyph shaping.
+	comment := "日本語 العربية עברית e\u0301 👩\u200d💻 می\u200cروم"
+	if got := DisplayComment(comment); got != comment {
+		t.Fatalf("DisplayComment() = %q, want %q", got, comment)
 	}
 }

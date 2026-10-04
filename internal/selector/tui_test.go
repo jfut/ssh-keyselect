@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jfut/ssh-keyselect/internal/identity"
 )
 
 func TestEchoInputLine(t *testing.T) {
@@ -104,10 +106,13 @@ func TestSelectionFrameShowsDisplayTimeHostContextAndCancelHint(t *testing.T) {
 		{
 			Algorithm:   "ssh-ed25519",
 			Fingerprint: "SHA256:destination-host",
-			KnownHosts:  []string{"node.example.test"},
+			KnownHosts:  []string{"node\u2066.example\u2069.test"},
 		},
 	}}
-	frame := tuiRenderSelectionFrame(nil, nil, "", 0, 100, requestContext, shownAt)
+	options := makeSearchableIdentityOptions([]identity.Identity{{
+		Comment: "work\u202ekey", Algorithm: "ssh-ed25519", Fingerprint: "SHA256:key",
+	}})
+	frame := tuiRenderSelectionFrame(options, matchIdentities(options, ""), "", 0, 100, requestContext, shownAt)
 	if !strings.Contains(frame, "["+identitySelectionBrand+" - 2026-09-27 12:34:56 JST]") {
 		t.Errorf("selection frame is missing its display time:\n%s", frame)
 	}
@@ -133,7 +138,8 @@ func TestSelectionFrameShowsDisplayTimeHostContextAndCancelHint(t *testing.T) {
 		"│  known_hosts hints: app.example.test",
 		"└─ Current target host",
 		"   Host key: ssh-ed25519 SHA256:destination-host",
-		"   known_hosts hints: node.example.test",
+		"   known_hosts hints: node .example .test",
+		"work key",
 		identitySelectionHint,
 	} {
 		if !strings.Contains(frame, expected) {

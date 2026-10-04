@@ -5,11 +5,9 @@ package systemtray
 
 import "testing"
 
-func TestTrayTooltipOmitsNumberForFirstInstance(t *testing.T) {
-	if got := trayTooltip(1); got != "SSH KeySelect" {
-		t.Fatalf("first instance tooltip = %q, want SSH KeySelect", got)
-	}
-	if got := trayTooltip(2); got != "SSH KeySelect (2)" {
-		t.Fatalf("second instance tooltip = %q, want SSH KeySelect (2)", got)
+func TestTrayTooltipIncludesListenEndpoint(t *testing.T) {
+	const endpoint = "C:¥Users¥jun¥.ssh¥ssh-keyselect-agent.sock"
+	if got, want := trayTooltip(endpoint), endpoint+" - SSH KeySelect"; got != want {
+		t.Fatalf("tray tooltip = %q, want %q", got, want)
 	}
 }

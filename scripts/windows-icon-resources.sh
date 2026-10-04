@@ -8,7 +8,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 resource_dir="assets/gui/generated/windows"
-command_dirs=(cmd/ssh-keyselect cmd/ssh-keyselect-gui)
+command_dirs=(cmd/ssh-keyselect)
+gui_command_dir="cmd/ssh-keyselect-gui"
 architectures=(amd64 arm64)
 
 # Go only picks up a .syso file from the command package directory, so stage
@@ -18,6 +19,10 @@ clean_staged_resources() {
 		for architecture in "${architectures[@]}"; do
 			rm -f "$command_dir/rsrc_windows_${architecture}.syso"
 		done
+	done
+	for architecture in "${architectures[@]}"; do
+		rm -f "$gui_command_dir/rsrc_windows_${architecture}.syso"
+		rm -f "$gui_command_dir/gui_windows_${architecture}.syso"
 	done
 }
 
@@ -32,6 +37,13 @@ stage_resources() {
 		for command_dir in "${command_dirs[@]}"; do
 			cp "$source" "$command_dir/rsrc_windows_${architecture}.syso"
 		done
+
+		source="$resource_dir/gui_windows_${architecture}.syso"
+		if [[ ! -s "$source" ]]; then
+			echo "missing generated Windows GUI resource: $source" >&2
+			return 1
+		fi
+		cp "$source" "$gui_command_dir/gui_windows_${architecture}.syso"
 	done
 }
 

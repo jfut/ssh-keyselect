@@ -3,21 +3,12 @@
 
 package systemtray
 
-import (
-	"fmt"
+import "github.com/jfut/ssh-keyselect/internal/branding"
 
-	"github.com/jfut/ssh-keyselect/internal/branding"
-)
-
-// trayTooltip labels concurrent tray instances without numbering the first one.
-func trayTooltip(slot uint32) string {
-	return branding.Name + trayTitleSuffix(slot)
-}
-
-// trayTitleSuffix numbers additional instances consistently with their tray tooltip.
-func trayTitleSuffix(slot uint32) string {
-	if slot <= 1 {
-		return ""
+// trayTooltip names the endpoint that this instance accepts agent requests on.
+func trayTooltip(endpoint string) string {
+	if endpoint == "" {
+		return branding.Name
 	}
-	return fmt.Sprintf(" (%d)", slot)
+	return endpoint + " - " + branding.Name
 }

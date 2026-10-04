@@ -268,6 +268,7 @@ Use `--config FILE` to select another file. Command-line values override file va
 - `SSH_KEYSELECT_LISTEN` overrides `agent.listen`.
 - When `agent.upstream` is empty, `UPSTREAM_SSH_AUTH_SOCK` takes precedence over `SSH_AUTH_SOCK`.
 - Environment variables and a leading `~` are expanded in configured paths using the GUI process environment.
+- If a filesystem entry already exists at the configured Listen path when the GUI starts, the proxy starts as `Not configured` and leaves that entry untouched.
 
 Remove the obsolete `[security]` section from older files. The configuration loader rejects unknown keys. Logging is off by default; set `log.level` in the TOML file or pass `--log-level` to enable it.
 

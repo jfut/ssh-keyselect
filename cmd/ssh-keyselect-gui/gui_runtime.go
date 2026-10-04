@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -123,6 +124,22 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 	}
 
 	hadListener := r.listenerState != nil
+	if !hadListener {
+		exists, err := guiListenPathExists(path)
+		if err != nil {
+			return "", "", fmt.Errorf("inspect listen path: %w", err)
+		}
+		if exists {
+			r.listenPath = ""
+			r.listenMode = mode
+			r.applyAgentSettings(cfg)
+			if r.server.Logger != nil {
+				r.server.Logger.Warn("listen path already exists; leaving the proxy unconfigured", "listen", path)
+			}
+			return "", mode, nil
+		}
+	}
+
 	var ln net.Listener
 	var cleanup func()
 	// Rebinding the same filesystem location under a different Windows transport
@@ -148,14 +165,22 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 		}
 	}
 
+	r.applyAgentSettings(cfg)
+	r.listenPath, r.listenMode = path, mode
+	r.startListener(ln, cleanup)
+	if r.server.Logger != nil {
+		r.server.Logger.Info("SSH agent proxy started", "listen", path, "ui", "gui")
+	}
+	return path, mode, nil
+}
+
+// applyAgentSettings updates the upstream agent and logger even when Listen is unavailable.
+func (r *guiRuntime) applyAgentSettings(cfg config.Config) {
 	r.agent.Set(upstream.EndpointAgent{Path: cfg.Agent.Upstream, Mode: cfg.Agent.UpstreamMode})
 	if r.currentLogLevel != cfg.Log.Level {
 		r.server.Logger = cmdutil.NewLogger(r.loggerOutput, cfg.Log.Level)
 		r.currentLogLevel = cfg.Log.Level
 	}
-	r.listenPath, r.listenMode = path, mode
-	r.startListener(ln, cleanup)
-	return path, mode, nil
 }
 
 func (r *guiRuntime) startListener(ln net.Listener, cleanup func()) {

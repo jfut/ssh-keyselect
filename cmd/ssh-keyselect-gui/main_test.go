@@ -50,8 +50,9 @@ func TestExecuteVersion(t *testing.T) {
 	}
 }
 
-func TestGUIMainWindowTitleKeepsInstanceNumberBeforeStatus(t *testing.T) {
-	if got, want := guiMainWindowTitle(" (2)", true, " - tray icon unavailable"), "SSH KeySelect (2) * - tray icon unavailable"; got != want {
+func TestGUIMainWindowTitleIncludesListenEndpointBeforeStatus(t *testing.T) {
+	const endpoint = "C:¥Users¥jun¥.ssh¥ssh-keyselect-agent.sock"
+	if got, want := guiMainWindowTitle(endpoint, true, " - tray icon unavailable"), endpoint+" - SSH KeySelect * - tray icon unavailable"; got != want {
 		t.Fatalf("GUI window title = %q, want %q", got, want)
 	}
 }

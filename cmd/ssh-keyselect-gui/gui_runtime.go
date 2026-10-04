@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 
@@ -179,6 +180,7 @@ func (r *guiRuntime) applyAgentSettings(cfg config.Config) {
 	r.agent.Set(upstream.EndpointAgent{Path: cfg.Agent.Upstream, Mode: cfg.Agent.UpstreamMode})
 	if r.currentLogLevel != cfg.Log.Level {
 		r.server.Logger = cmdutil.NewLogger(r.loggerOutput, cfg.Log.Level)
+		slog.SetDefault(r.server.Logger)
 		r.currentLogLevel = cfg.Log.Level
 	}
 }

@@ -63,14 +63,9 @@ func configureGUIAppearance() {
 	unison.DefaultMenuItemTheme.KeyFont = guiFont(11, false)
 }
 
-// guiFont uses a sans-serif face with Japanese glyph coverage on each platform.
+// guiFont uses a small sans-serif face with on-demand fallback for missing glyphs.
 func guiFont(size float32, emphasized bool) unison.Font {
 	return guistyle.Font(size, emphasized)
-}
-
-// guiSymbolFont selects a monochrome symbol face instead of an emoji fallback.
-func guiSymbolFont(size float32, emphasized bool) unison.Font {
-	return guistyle.SymbolFont(size, emphasized)
 }
 
 // styleGUIAccentButton matches secondary actions to the prominent Refresh Keys button.
@@ -107,14 +102,9 @@ func styleGUIAutoSelectButton(button *unison.Button, selected, dangerous bool) {
 		}
 	}
 	button.DrawCallback = func(canvas *unison.Canvas, _ geom.Rect) {
-		guistyle.DrawButtonWithColors(button, canvas, 0)
+		guistyle.DrawButtonWithColors(button, canvas)
 	}
 	button.MarkForRedraw()
-}
-
-// centerGUIButtonGlyph centers a symbol and adjusts its baseline and margins for its glyph.
-func centerGUIButtonGlyph(button *unison.Button, verticalMargin, baselineOffset float32) {
-	guistyle.CenterButtonGlyph(button, verticalMargin, baselineOffset)
 }
 
 // showGUIAboutDialog provides a small Help menu destination with build information.
@@ -365,15 +355,11 @@ func guiAddConnectionModeRow(card *unison.Panel, markerInk, modeFill, modeInk un
 	pathPanel.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, VAlign: align.Middle, HGrab: true})
 	pathAndCopy.AddChild(pathPanel)
 
-	copyButton := unison.NewButton()
-	copyButton.Font = guiFont(10.5, false)
-	copyButton.SetTitle("⧉")
-	centerGUIButtonGlyph(copyButton, 4, 4.5)
+	copyButton := guistyle.NewIconButton(guistyle.CopyIcon, "Copy socket path")
 	copyButton.BackgroundInk = guiCardInk
 	copyButton.EdgeInk = guiBorderInk
 	copyButton.CornerRadius = geom.NewUniformSize(7)
 	copyButton.SetLayoutData(&unison.FlexLayoutData{VAlign: align.Middle})
-	copyButton.Tooltip = unison.NewTooltipWithText("Copy socket path")
 	pathAndCopy.AddChild(copyButton)
 	pathAndCopy.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, VAlign: align.Middle, HGrab: true})
 	endpointPanel.AddChild(pathAndCopy)

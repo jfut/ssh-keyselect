@@ -110,13 +110,14 @@ archives:
     files:
       - LICENSE
       - CREDITS
-      - src: "dist/ssh-keyselect-gui_darwin_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/Info.plist"
+      # Only Darwin builds create an app bundle; match the archive OS to prevent cross-platform inclusion.
+      - src: "dist/ssh-keyselect-gui_{{ .Os }}_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/Info.plist"
         dst: ssh-keyselect-gui.app/Contents
-      - src: "dist/ssh-keyselect-gui_darwin_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/PkgInfo"
+      - src: "dist/ssh-keyselect-gui_{{ .Os }}_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/PkgInfo"
         dst: ssh-keyselect-gui.app/Contents
-      - src: "dist/ssh-keyselect-gui_darwin_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/MacOS/ssh-keyselect-gui"
+      - src: "dist/ssh-keyselect-gui_{{ .Os }}_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/MacOS/ssh-keyselect-gui"
         dst: ssh-keyselect-gui.app/Contents/MacOS
-      - src: "dist/ssh-keyselect-gui_darwin_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/Resources/ssh-keyselect.icns"
+      - src: "dist/ssh-keyselect-gui_{{ .Os }}_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/Resources/ssh-keyselect.icns"
         dst: ssh-keyselect-gui.app/Contents/Resources
 
 changelog:

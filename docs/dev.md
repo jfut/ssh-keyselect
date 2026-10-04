@@ -161,7 +161,7 @@ Run `just deps-credits` after changing Go dependencies or the supported target o
 
 `just clean` removes `dist/`, generated platform assets, and any temporary Windows resource copies in the command directories. `just build` creates local binaries and generated platform assets. `just snapshot` builds a local GoReleaser snapshot. `just release` runs GoReleaser without publishing.
 
-Release archives contain both executables, `LICENSE`, and `CREDITS`. Linux packages install `LICENSE` and `CREDITS` under `/usr/share/doc/ssh-keyselect` and install the GUI desktop entry and PNG icons. macOS archives include an application bundle. Windows release binaries embed their icon and use the GUI subsystem for the GUI executable.
+Release archives contain both executables, `LICENSE`, and `CREDITS`. Linux packages install `LICENSE` and `CREDITS` under `/usr/share/doc/ssh-keyselect` and install the GUI desktop entry and PNG icons. Only macOS archives include `ssh-keyselect-gui.app` for Finder launches. The Darwin GUI post-build hook creates this bundle, and the archive file globs match both `.Os` and `.Arch` so it cannot be included in Linux or Windows archives. Windows release binaries embed their icon and use the GUI subsystem for the GUI executable.
 
 RPM artifacts are signed by GitHub Actions using `RPM_SIGNING_KEY`; set `NFPM_PASSPHRASE` if the key requires a passphrase. The release flow is:
 

@@ -1,0 +1,24 @@
+{
+  "RT_GROUP_ICON": {
+    "APP": {
+      "0000": "generated/ssh-keyselect-icon.ico"
+    }
+  },
+  "RT_VERSION": {
+    "#1": {
+      "0000": {
+        "fixed": {
+          "file_version": "0.0.0.0",
+          "product_version": "0.0.0.0"
+        },
+        "info": {
+          "0409": {
+            "FileDescription": "SSH KeySelect",
+            "OriginalFilename": "ssh-keyselect-gui.exe",
+            "ProductName": "SSH KeySelect"
+          }
+        }
+      }
+    }
+  }
+}

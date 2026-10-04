@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"sync"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
 
 	"github.com/jfut/ssh-keyselect/internal/branding"
@@ -35,6 +36,7 @@ const (
 	csDoubleClicks = 0x0008
 
 	nimAdd    = 0x00000000
+	nimModify = 0x00000001
 	nimDelete = 0x00000002
 
 	mfString = 0x00000000
@@ -177,18 +179,18 @@ type Callbacks struct {
 	IconPNG []byte
 }
 
-// Start creates the notification-area icon and returns its instance title suffix.
-func Start(callbacks Callbacks) (func() error, string, error) {
+// Start creates the notification-area icon and returns a function that updates its endpoint label.
+func Start(callbacks Callbacks, endpoint string) (func() error, func(string) error, error) {
 	ready := make(chan startResult, 1)
 	done := make(chan error, 1)
-	go runTray(ready, done, callbacks)
+	go runTray(ready, done, callbacks, endpoint)
 	started := <-ready
 	if started.err != nil {
-		return nil, "", started.err
+		return nil, nil, started.err
 	}
 	var once sync.Once
 	var stopErr error
-	return func() error {
+	cleanup := func() error {
 		once.Do(func() {
 			result, _, callErr := postMessageW.Call(started.window, wmClose, 0, 0)
 			if result == 0 {
@@ -203,7 +205,18 @@ func Start(callbacks Callbacks) (func() error, string, error) {
 			}
 		})
 		return stopErr
-	}, trayTitleSuffix(started.slot), nil
+	}
+	updateTooltip := func(endpoint string) error {
+		data := notifyIconData{
+			Size:   uint32(unsafe.Sizeof(notifyIconData{})),
+			Window: windows.Handle(started.window),
+			ID:     started.slot,
+			Flags:  nifTip,
+		}
+		setTrayTooltip(&data, trayTooltip(endpoint))
+		return notifyTrayIcon(nimModify, &data)
+	}
+	return cleanup, updateTooltip, nil
 }
 
 type startResult struct {
@@ -212,7 +225,7 @@ type startResult struct {
 	err    error
 }
 
-func runTray(ready chan<- startResult, done chan<- error, callbacks Callbacks) {
+func runTray(ready chan<- startResult, done chan<- error, callbacks Callbacks, endpoint string) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
@@ -316,8 +329,7 @@ func runTray(ready chan<- startResult, done chan<- error, callbacks Callbacks) {
 		CallbackMessage: wmTrayCallback,
 		Icon:            icon,
 	}
-	// Keep the first instance's tooltip clean while labeling additional instances by slot.
-	copy(data.Tip[:], windows.StringToUTF16(trayTooltip(traySlot)))
+	setTrayTooltip(&data, trayTooltip(endpoint))
 	if err := notifyTrayIcon(nimAdd, &data); err != nil {
 		_, _, _ = destroyWindow.Call(window)
 		_, _, _ = unregisterClassW.Call(uintptr(unsafe.Pointer(trayWindowClass)), uintptr(instance))
@@ -490,6 +502,22 @@ func notifyTrayIcon(action uintptr, data *notifyIconData) error {
 		return winCallError("update Windows notification-area icon", callErr)
 	}
 	return nil
+}
+
+// setTrayTooltip writes the endpoint label into the fixed-size Windows notification-icon field.
+func setTrayTooltip(data *notifyIconData, tooltip string) {
+	data.Flags |= nifTip
+	encoded := utf16.Encode([]rune(tooltip))
+	maxUnits := len(data.Tip) - 1
+	if len(encoded) > maxUnits {
+		encoded = encoded[:maxUnits]
+		last := encoded[len(encoded)-1]
+		if last >= 0xD800 && last <= 0xDBFF {
+			encoded = encoded[:len(encoded)-1]
+		}
+	}
+	copy(data.Tip[:], encoded)
+	data.Tip[len(encoded)] = 0
 }
 
 // acquireTraySlot reserves the lowest free per-user slot for this process.

@@ -4,6 +4,7 @@ tmp.*
 /assets/gui/generated/
 /cmd/ssh-keyselect/rsrc_windows_*.syso
 /cmd/ssh-keyselect-gui/rsrc_windows_*.syso
+/cmd/ssh-keyselect-gui/gui_windows_*.syso
 *.log
 
 # credits

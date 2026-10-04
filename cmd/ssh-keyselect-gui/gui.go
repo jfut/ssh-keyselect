@@ -116,6 +116,13 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return cmdutil.ReportError(stderr, guiCommandName, err)
 	}
+	listenPathExists, err := guiListenPathExists(resolvedListenPath)
+	if err != nil {
+		return cmdutil.ReportError(stderr, guiCommandName, err)
+	}
+	if listenPathExists {
+		resolvedListenPath = ""
+	}
 	activeConfigPath := configPath
 	if activeConfigPath == "" {
 		activeConfigPath, err = config.DefaultPath()
@@ -139,14 +146,21 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 		return endpoint.List(refreshCtx)
 	})
 	server.Selector = guiSelector
-	logger.Info("SSH agent proxy started", "listen", resolvedListenPath, "ui", "gui")
+	logger.Info("starting SSH KeySelect GUI", "listen", resolvedListenPath, "ui", "gui")
 	serveWithGUI(ctx, stop, cfg, activeConfigPath, resolvedListenPath, requestedListenMode, effectiveListenMode,
 		endpointAgent, &server, guiSelector, logger, stderr)
 	return 0
 }
 
-func guiMainWindowTitle(instanceSuffix string, dirty bool, statusSuffix string) string {
-	title := branding.Name + instanceSuffix
+func guiEndpointTitle(endpoint string) string {
+	if endpoint == "" {
+		return branding.Name
+	}
+	return endpoint + " - " + branding.Name
+}
+
+func guiMainWindowTitle(endpoint string, dirty bool, statusSuffix string) string {
+	title := guiEndpointTitle(endpoint)
 	if dirty {
 		title += " *"
 	}
@@ -186,6 +200,7 @@ func serveWithGUI(
 	var runtimeState *guiRuntime
 	var configState *guiConfigState
 	var cleanupTray func() error
+	var updateTrayTooltip func(string) error
 
 	unison.Start(
 		unison.StartupFinishedCallback(func() {
@@ -203,10 +218,20 @@ func serveWithGUI(
 			} else {
 				window.SetTitleIcons(icons)
 			}
-			instanceTitleSuffix := ""
+			listenDisplayEndpoint := guiDisplayEndpointPath(listenPath)
 			statusTitleSuffix := ""
 			updateWindowTitle := func() {
-				window.SetTitle(guiMainWindowTitle(instanceTitleSuffix, configState != nil && configState.dirty, statusTitleSuffix))
+				window.SetTitle(guiMainWindowTitle(listenDisplayEndpoint, configState != nil && configState.dirty, statusTitleSuffix))
+			}
+			updateWindowTitle()
+			updateListenTitle := func(endpoint string) {
+				listenDisplayEndpoint = guiDisplayEndpointPath(endpoint)
+				updateWindowTitle()
+				if updateTrayTooltip != nil {
+					if err := updateTrayTooltip(listenDisplayEndpoint); err != nil {
+						logger.Warn("update system tray tooltip", "error", err)
+					}
+				}
 			}
 			window.AllowCloseCallback = func() bool {
 				if configState == nil || !configState.dirty {
@@ -491,6 +516,7 @@ func serveWithGUI(
 				}
 				updateUpstreamRow(endpoint.Path, effectiveUpstreamMode, modeErr)
 				updateListenRow(configState.actualListen, configState.effectiveListenMode, nil)
+				updateListenTitle(configState.actualListen)
 			}
 			configState.onUpdate = func() {
 				updateConnectionRows()
@@ -526,15 +552,14 @@ func serveWithGUI(
 						}
 					})
 				}
-				trayCleanup, titleSuffix, trayErr := systemtray.Start(systemtray.Callbacks{
+				trayCleanup, tooltipUpdater, trayErr := systemtray.Start(systemtray.Callbacks{
 					Show:    showWindow,
 					Quit:    func() { unison.InvokeTask(unison.AttemptQuit) },
 					Refresh: func() { unison.InvokeTask(refreshIdentities) },
 					IconPNG: trayIconPNG,
-				})
+				}, listenDisplayEndpoint)
 				if trayErr == nil {
-					instanceTitleSuffix = titleSuffix
-					updateWindowTitle()
+					updateTrayTooltip = tooltipUpdater
 					window.MinimizedCallback = func(minimized bool) {
 						if minimized {
 							window.Hide()

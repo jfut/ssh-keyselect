@@ -17,3 +17,9 @@ for architecture in amd64 arm64; do
 		-ico "$icon_path" \
 		-o "$resource_dir/rsrc_windows_${architecture}.syso"
 done
+
+# Keep the GUI icon and friendly name in one resource object for the Go linker.
+go run github.com/tc-hib/go-winres@v0.3.3 make \
+	--in assets/gui/windows-gui-resources.json \
+	--arch amd64,arm64 \
+	--out "$resource_dir/gui"

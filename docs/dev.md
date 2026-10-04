@@ -117,9 +117,15 @@ The `cygwin` transport reads the socket file's endpoint information and connects
 
 The GUI stores and displays paths in platform-specific formats. On Windows, dialog paths are converted to or from the selected transport when opening or saving configuration. A Listen mode change closes and reopens the listener, attempting to restore the previous listener if rebinding fails.
 
+At GUI startup, an existing filesystem entry at the resolved Listen path leaves the proxy unconfigured. The preflight check prevents the listener from removing or replacing an existing socket file.
+
 ### GUI assets
 
-`assets/ssh-keyselect-logo.png` is the source artwork. `just gen-platform-icons` creates the multi-size ICO, Linux desktop PNGs, and macOS ICNS under the ignored `assets/gui/generated/` directory. `just gen-windows-icons` also generates ignored Windows `.syso` resources under `assets/gui/generated/windows/`. Because Go includes `.syso` files from a package directory, `just build`, `just snapshot`, `just release`, and release CI temporarily stage copies in the command directories and remove them after building.
+`assets/ssh-keyselect-logo.png` is the source artwork. `just gen-platform-icons` creates the multi-size ICO, Linux desktop PNGs, and macOS ICNS under the ignored `assets/gui/generated/` directory. `just gen-windows-icons` also generates ignored Windows `.syso` resources under `assets/gui/generated/windows/`.
+
+The GUI icon and version information (including its `SSH KeySelect` name in Task Manager) are combined in one Windows resource object because the Go linker accepts only one resource section per executable. Windows version resources use `go-winres`, pinned in `scripts/generate-windows-icons.sh`. GoReleaser's per-target pre-build hook overrides the GUI file and product versions with `.Version`, then removes the temporary resource after each build. The main window title and tray tooltip include the displayed active Listen endpoint followed by ` - SSH KeySelect`. Both labels are refreshed when the Listen endpoint changes in Settings.
+
+Because Go includes `.syso` files from a package directory, `just build`, `just snapshot`, `just release`, and release CI temporarily stage copies in the command directories and remove them after building.
 
 The icon source currently has no recorded provenance or license metadata in this repository. Confirm that the project has redistribution rights and record its source/license, or replace it with a project-created asset, before publishing binaries.
 

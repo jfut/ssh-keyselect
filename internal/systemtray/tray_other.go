@@ -18,4 +18,6 @@ type Callbacks struct {
 }
 
 // Start is a no-op on platforms without an operating-system tray implementation.
-func Start(Callbacks) (func() error, string, error) { return func() error { return nil }, "", nil }
+func Start(Callbacks, string) (func() error, func(string) error, error) {
+	return func() error { return nil }, func(string) error { return nil }, nil
+}

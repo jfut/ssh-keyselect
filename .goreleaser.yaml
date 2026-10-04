@@ -46,7 +46,18 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}{{ if eq .Os "windows" }} -H windowsgui{{ end }}
     hooks:
+      pre:
+        - cmd: bash ./scripts/generate-windows-gui-resource.sh prepare
+          env:
+            - SSH_KEYSELECT_TARGET_OS={{ .Os }}
+            - SSH_KEYSELECT_TARGET_ARCH={{ .Arch }}
+            - SSH_KEYSELECT_VERSION={{ .Version }}
+          output: true
       post:
+        - cmd: bash ./scripts/generate-windows-gui-resource.sh clean
+          env:
+            - SSH_KEYSELECT_TARGET_OS={{ .Os }}
+            - SSH_KEYSELECT_TARGET_ARCH={{ .Arch }}
         - cmd: bash -c 'if [ "{{ .Os }}" = darwin ]; then bash ./scripts/package-macos-gui-app.sh "{{ .Path }}"; fi'
           env:
             - APP_VERSION={{ .Version }}

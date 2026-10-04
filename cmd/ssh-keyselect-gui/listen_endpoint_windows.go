@@ -6,6 +6,8 @@
 package main
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -27,4 +29,22 @@ func guiSameListenEndpoint(first, second string) bool {
 		return strings.EqualFold(filepath.Clean(firstNative), filepath.Clean(secondNative))
 	}
 	return guiSamePath(first, second)
+}
+
+// guiListenPathExists checks filesystem endpoints and leaves named pipes to the pipe listener.
+func guiListenPathExists(endpoint string) (bool, error) {
+	if endpoint == "" || winpath.IsNamedPipe(endpoint) {
+		return false, nil
+	}
+	path, err := winpath.NativeSocketPath(endpoint)
+	if err != nil {
+		return false, nil
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return true, nil
+	} else if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else {
+		return false, err
+	}
 }

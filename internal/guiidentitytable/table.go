@@ -132,8 +132,10 @@ func New(numbered bool) *View {
 	header.InteriorDividerColor = borderInk
 	for _, columnHeader := range headers {
 		columnHeader.OnBackgroundInk = mutedInk
-		columnHeader.Font = guistyle.Font(8, true)
+		columnHeader.Font = guistyle.Font(10, false)
 		columnHeader.VAlign = align.Middle
+		// Header constructors capture font metrics, so rebuild the text after styling.
+		columnHeader.SetTitle(columnHeader.String())
 	}
 	return &View{Table: table, header: header, numbered: numbered}
 }

@@ -200,7 +200,7 @@ func guiNewSelectionWindow(
 	content.SetBorder(unison.NewEmptyBorder(geom.NewUniformInsets(8)))
 	content.SetLayout(&unison.FlexLayout{Columns: 1, VSpacing: 5})
 
-	fingerprintFont := unison.MonospacedFont.Face().Font(9)
+	fingerprintFont := guistyle.MonospacedFont(9)
 	mutedInk := unison.RGB(104, 117, 134)
 	rowInk := unison.RGB(255, 255, 255)
 	detailsScroll := guiNewSelectionDetailsArea(window, requestContext, shownAt, rowInk)
@@ -518,7 +518,7 @@ func guiSelectionDetailsTextAreaHeight(requestContext SelectionContext) float32 
 }
 
 func guiSelectionDetailsFont() unison.Font {
-	return unison.MonospacedFont.Face().Font(8.5)
+	return guistyle.MonospacedFont(8.5)
 }
 
 func guiSelectionDetailsVisibleLines(requestContext SelectionContext) int {

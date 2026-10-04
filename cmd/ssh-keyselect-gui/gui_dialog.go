@@ -87,7 +87,7 @@ func newGUIDialog(title string, icon unison.Drawable, iconInk unison.Ink, body u
 	for _, info := range buttons {
 		button := unison.NewButton()
 		// Set the font before the title so its text uses the regular GUI face.
-		button.Font = guiFont(button.Font.Size()+1.5, false)
+		button.Font = guiFont(11.5, false)
 		button.SetTitle(info.Title)
 		button.ClickCallback = func() { window.StopModal(info.ResponseCode) }
 		button.SetLayoutData(&unison.FlexLayoutData{HSpan: 1, VSpan: 1, HAlign: align.Fill, VAlign: align.Middle})

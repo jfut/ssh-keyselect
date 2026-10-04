@@ -19,32 +19,17 @@ import (
 
 var accentInk = unison.RGB(24, 112, 222)
 
-// Font selects the application's sans-serif font with Japanese glyph coverage.
+// Font keeps the mostly Latin UI on a small sans-serif face. Unison loads fallback
+// faces for missing glyphs when needed, instead of retaining CJK faces at startup.
 func Font(size float32, emphasized bool) unison.Font {
-	family := "Noto Sans CJK JP"
+	family := "Noto Sans"
 	switch runtime.GOOS {
 	case "windows":
-		family = "Yu Gothic UI"
+		family = "Segoe UI"
 	case "darwin":
-		family = "Hiragino Sans"
+		family = "Helvetica Neue"
 	}
 	return fontFromFamily(family, size, emphasized)
-}
-
-// SymbolFont selects a monochrome symbol face instead of an emoji fallback.
-func SymbolFont(size float32, emphasized bool) unison.Font {
-	family := "Noto Sans Symbols 2"
-	switch runtime.GOOS {
-	case "windows":
-		family = "Segoe UI Symbol"
-	case "darwin":
-		family = "Apple Symbols"
-	}
-	face := unison.MatchFontFace(family, fontWeight(emphasized), spacing.Standard, slant.Upright)
-	if face == nil {
-		return Font(size, emphasized)
-	}
-	return face.Font(size)
 }
 
 // StyleAccentButton applies the shared primary-action colors and padding.
@@ -59,54 +44,16 @@ func StyleAccentButton(button *unison.Button) {
 	button.VMargin = 4
 }
 
-// CenterButtonGlyph centers the glyph within a button and applies its optical baseline adjustment.
-func CenterButtonGlyph(button *unison.Button, verticalMargin, baselineOffset float32) {
-	button.HAlign = align.Middle
-	button.VAlign = align.Middle
-	button.HMargin = 7
-	button.VMargin = verticalMargin
-	button.Text.AdjustDecorations(func(decoration *unison.TextDecoration) {
-		decoration.BaselineOffset = baselineOffset
-	})
-}
-
-// SetEqualCompactIconButtonSizes gives icon-only buttons compact, matching square bounds.
-func SetEqualCompactIconButtonSizes(buttons ...*unison.Button) {
-	for _, button := range buttons {
-		button.HMargin = 2
-		button.VMargin = 0
-	}
-	size := geom.NewUniformSize(24)
-	for _, button := range buttons {
-		button.SetSizer(func(geom.Size) (geom.Size, geom.Size, geom.Size) {
-			return size, size, size
-		})
-	}
-}
-
 // NewRefreshButton returns the icon-only refresh control shared by both GUI windows.
 func NewRefreshButton() *unison.Button {
-	button := unison.NewButton()
-	button.Font = Font(13.5, true)
+	button := NewIconButton(RefreshIcon, "Refresh Keys")
 	StyleAccentButton(button)
-	button.SetTitle("↻")
-	CenterButtonGlyph(button, 0, 0)
-	SetEqualCompactIconButtonSizes(button)
-	button.DrawCallback = func(canvas *unison.Canvas, _ geom.Rect) {
-		DrawAccentButtonWithWhiteGlyph(button, canvas, 0)
-	}
-	button.Tooltip = unison.NewTooltipWithText("Refresh Keys")
 	button.SetLayoutData(&unison.FlexLayoutData{HAlign: align.End, VAlign: align.Middle})
 	return button
 }
 
-// DrawAccentButtonWithWhiteGlyph draws a white symbol with an optional horizontal optical adjustment.
-func DrawAccentButtonWithWhiteGlyph(button *unison.Button, canvas *unison.Canvas, horizontalGlyphOffset float32) {
-	DrawButtonWithColors(button, canvas, horizontalGlyphOffset)
-}
-
 // DrawButtonWithColors draws a button using the foreground and background colors already assigned to it.
-func DrawButtonWithColors(button *unison.Button, canvas *unison.Canvas, horizontalGlyphOffset float32) {
+func DrawButtonWithColors(button *unison.Button, canvas *unison.Canvas) {
 	background := button.BackgroundInk
 	foreground := button.OnBackgroundInk
 	if button.Pressed {
@@ -123,7 +70,6 @@ func DrawButtonWithColors(button *unison.Button, canvas *unison.Canvas, horizont
 	unison.DrawRoundedRectBase(canvas, rect, button.CornerRadius, thickness, background, edge)
 	rect = rect.Inset(geom.NewUniformInsets(thickness + 0.5))
 	rect = rect.Inset(geom.NewSymmetricInsets(button.HorizontalMargin(), button.VerticalMargin()))
-	rect.X += horizontalGlyphOffset
 	defer button.Text.RestoreDecorations(button.Text.AdjustDecorations(func(decoration *unison.TextDecoration) {
 		decoration.BackgroundInk = nil
 		decoration.OnBackgroundInk = foreground

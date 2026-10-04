@@ -111,6 +111,13 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	if err := cfg.Validate(); err != nil {
 		return cmdutil.ReportError(stderr, guiCommandName, err)
 	}
+	// This mostly idle GUI does not need OpenGL driver and per-window context allocations.
+	// Apply the default before Unison starts, while honoring an explicit rendering preference.
+	if _, overridden := os.LookupEnv(unison.CPURenderingEnvKey); !overridden {
+		if err := os.Setenv(unison.CPURenderingEnvKey, "1"); err != nil {
+			return cmdutil.ReportError(stderr, guiCommandName, fmt.Errorf("configure GUI rendering: %w", err))
+		}
+	}
 	requestedListenMode := cfg.Agent.ListenMode
 	resolvedListenPath, effectiveListenMode, err := resolveGUIListen(cfg)
 	if err != nil {
@@ -132,6 +139,8 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	}
 
 	logger := cmdutil.NewLogger(stderr, cfg.Log.Level)
+	// Unison's renderer startup messages must also respect the configured log level.
+	slog.SetDefault(logger)
 	endpointAgent := &guiEndpointAgent{}
 	endpointAgent.Set(upstream.EndpointAgent{Path: cfg.Agent.Upstream, Mode: cfg.Agent.UpstreamMode})
 	server := agentproxy.Server{
@@ -376,19 +385,8 @@ func serveWithGUI(
 			proxyTitleControls := unison.NewPanel()
 			proxyTitleControls.SetLayout(&unison.FlexLayout{Columns: 2, HSpacing: 10, VAlign: align.Middle})
 			proxyTitleControls.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
-			settingsButton := unison.NewButton()
-			settingsButton.Font = guiSymbolFont(13.5, true)
+			settingsButton := guistyle.NewIconButton(guistyle.SettingsIcon, "Settings")
 			styleGUIAccentButton(settingsButton)
-			settingsButton.SetTitle("⚙")
-			// The gear glyph sits slightly high in the platform symbol font.
-			centerGUIButtonGlyph(settingsButton, 0, 1.5)
-			// Compensate for the gear glyph's left-heavy visual bounds.
-			settingsButton.HAlign = align.End
-			settingsButton.DrawCallback = func(canvas *unison.Canvas, _ geom.Rect) {
-				guistyle.DrawAccentButtonWithWhiteGlyph(settingsButton, canvas, 0.5)
-			}
-			settingsButton.Tooltip = unison.NewTooltipWithText("Settings")
-			guistyle.SetEqualCompactIconButtonSizes(refresh, settingsButton)
 			settingsButton.SetLayoutData(&unison.FlexLayoutData{HAlign: align.End, VAlign: align.Middle})
 			proxyTitleControls.AddChild(settingsButton)
 			proxyTitleControls.AddChild(autoSelectControls)

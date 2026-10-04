@@ -111,6 +111,12 @@ OpenSSH records session bindings for the lifetime of an agent connection and rej
 
 The selected key digests stay authorized until the binding chain changes or the listen-socket connection closes. Later signing requests for a selected key in the same chain do not open another picker; requests for unselected keys are rejected. The repeated `RequestIdentities` branch covers clients that query again on the same agent socket. OpenSSH's usual authentication flow fetches the list while preparing public-key authentication; it does not poll periodically while an SSH session is idle ([OpenSSH source](https://github.com/openssh/openssh-portable/blob/master/sshconnect2.c#L1543-L1571)).
 
+### Display text sanitization
+
+`internal/identity.DisplayComment` replaces invalid UTF-8 with U+FFFD and maps Unicode control characters and characters with the [Bidi_Control property](https://www.unicode.org/Public/UCD/latest/ucd/PropList.txt) to ASCII spaces. This prevents agent comments and local host hints from injecting terminal controls or explicit text-direction changes into surrounding UI text. Ordinary multilingual text, combining marks, and joining characters retain their spelling and glyph shaping.
+
+CLI identity tables, terminal picker rows, shared GUI key rows and their clipboard text, and both pickers' `known_hosts` hints use this sanitizer. Sanitization applies to display strings; the identity retains the original agent comment for protocol responses.
+
 ### Frontend resource limits
 
 Each proxy listener allows up to 128 concurrent client connections; additional connections are closed immediately. Admission counts each connection until both its request handler and frame reader have stopped.

@@ -32,7 +32,7 @@ func TestStoppedGUISelectorCancelsWithoutStartingTheUI(t *testing.T) {
 }
 
 func TestGUISelectorCopiesKeyFromShortcutAndContextMenu(t *testing.T) {
-	identities := []identity.Identity{guiTestIdentity(t, "first", 1), guiTestIdentity(t, "second", 2)}
+	identities := []identity.Identity{guiTestIdentity(t, "fir\u202est", 1), guiTestIdentity(t, "sec\u2067ond", 2)}
 	requestContext := SelectionContext{HostBindings: []HostBinding{
 		{
 			Algorithm:    "ssh-ed25519",
@@ -43,7 +43,7 @@ func TestGUISelectorCopiesKeyFromShortcutAndContextMenu(t *testing.T) {
 		{
 			Algorithm:   "ssh-ed25519",
 			Fingerprint: "SHA256:destination-host",
-			KnownHosts:  []string{"node.example.test"},
+			KnownHosts:  []string{"node\u2068.example\u2069.test"},
 		},
 	}}
 	shownAt := time.Date(2026, time.September, 27, 12, 34, 56, 789_000_000, time.FixedZone("JST", 9*60*60))
@@ -93,7 +93,7 @@ func TestGUISelectorCopiesKeyFromShortcutAndContextMenu(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"├─ Forwarding hop 1\n│  Host key: ssh-ed25519 SHA256:forwarding-host\n│  known_hosts hints: gateway.example.test",
-		"└─ Current target host\n   Host key: ssh-ed25519 SHA256:destination-host\n   known_hosts hints: node.example.test",
+		"└─ Current target host\n   Host key: ssh-ed25519 SHA256:destination-host\n   known_hosts hints: node .example .test",
 	} {
 		if !strings.Contains(details, expected) {
 			t.Errorf("GUI request details are missing %q:\n%s", expected, details)
@@ -129,7 +129,7 @@ func TestGUISelectorCopiesKeyFromShortcutAndContextMenu(t *testing.T) {
 	}
 
 	screen.KeyPress(unison.KeyC, mod.Control)
-	if got, want := unison.ClipboardGetText(), "first\tssh-ed25519\t255\t"+identities[0].Fingerprint; got != want {
+	if got, want := unison.ClipboardGetText(), "fir st\tssh-ed25519\t255\t"+identities[0].Fingerprint; got != want {
 		t.Fatalf("shortcut clipboard = %q, want %q", got, want)
 	}
 
@@ -155,7 +155,7 @@ func TestGUISelectorCopiesKeyFromShortcutAndContextMenu(t *testing.T) {
 	if !screen.PerformAccessibilityAction(accessibility.ActionRequest{Node: copyItem, Action: accessibility.Press}) {
 		t.Fatal("could not activate the context-menu Copy item")
 	}
-	if got, want := unison.ClipboardGetText(), "second\tssh-ed25519\t255\t"+identities[1].Fingerprint; got != want {
+	if got, want := unison.ClipboardGetText(), "sec ond\tssh-ed25519\t255\t"+identities[1].Fingerprint; got != want {
 		t.Fatalf("context-menu clipboard = %q, want %q", got, want)
 	}
 	if errors := screen.Errors(); len(errors) > 0 {

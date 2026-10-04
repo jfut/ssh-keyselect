@@ -60,8 +60,9 @@ func configureGUIAppearance() {
 	unison.DefaultMenuItemTheme.SelectionColor = guiAccentInk
 	unison.DefaultMenuItemTheme.OnSelectionColor = guiCardInk
 	unison.DefaultMenuTheme.MenuBorder = unison.NewLineBorder(guiMenuBorderInk, geom.Size{}, geom.NewUniformInsets(1), false)
-	unison.DefaultMenuItemTheme.TitleFont = guiFont(11, false)
-	unison.DefaultMenuItemTheme.KeyFont = guiFont(11, false)
+	// Match menu text to the standard control font so opening mode choices does not enlarge it.
+	unison.DefaultMenuItemTheme.TitleFont = unison.SystemFont
+	unison.DefaultMenuItemTheme.KeyFont = unison.SystemFont
 }
 
 // guiFont uses a small sans-serif face with on-demand fallback for missing glyphs.
@@ -159,7 +160,6 @@ func showGUIAboutDialog() {
 	content.AddChild(dependenciesTitle)
 	dependencyText := unison.NewMultiLineField()
 	dependencyText.Font = guiFont(9.5, false)
-	dependencyText.NoSelectAllOnFocus = true
 	dependencyText.BackgroundInk = unison.RGB(255, 255, 255)
 	dependencyText.OnBackgroundInk = guiTextInk
 	dependencyText.EditableInk = unison.RGB(255, 255, 255)
@@ -169,49 +169,7 @@ func showGUIAboutDialog() {
 	unison.UninstallFocusBorders(dependencyText, dependencyText)
 	// Keep the license text clear of the rounded outline on all four sides.
 	dependencyText.SetBorder(unison.NewEmptyBorder(geom.NewUniformInsets(5)))
-	dependencyText.RuneTypedCallback = func(rune) bool { return true }
-	dependencyText.KeyDownCallback = func(keyCode unison.KeyCode, modifiers mod.Modifiers, repeat bool) bool {
-		if modifiers.OSMenuCommandDown() {
-			switch keyCode {
-			case unison.KeyA, unison.KeyC, unison.KeyLeft, unison.KeyRight, unison.KeyUp, unison.KeyDown:
-				return dependencyText.DefaultKeyDown(keyCode, modifiers, repeat)
-			default:
-				return true
-			}
-		}
-		switch keyCode {
-		case unison.KeyBackspace, unison.KeyDelete, unison.KeyReturn, unison.KeyNumPadEnter:
-			return true
-		default:
-			return dependencyText.DefaultKeyDown(keyCode, modifiers, repeat)
-		}
-	}
-	dependencyText.RemoveCmdHandler(unison.CutItemID)
-	dependencyText.RemoveCmdHandler(unison.PasteItemID)
-	dependencyText.RemoveCmdHandler(unison.DeleteItemID)
-	dependencyText.ContextMenuCallback = func(geom.Point) unison.Menu {
-		factory := unison.DefaultMenuFactory()
-		menu := factory.NewMenu(unison.PopupMenuTemporaryBaseID|unison.ContextMenuIDFlag, "", nil)
-		if dependencyText.CanCopy() {
-			menu.InsertItem(-1, factory.NewItem(
-				unison.PopupMenuTemporaryBaseID+1|unison.ContextMenuIDFlag,
-				"Copy", unison.KeyBinding{}, nil,
-				func(unison.MenuItem) { dependencyText.Copy() },
-			))
-		}
-		if dependencyText.CanSelectAll() {
-			menu.InsertItem(-1, factory.NewItem(
-				unison.PopupMenuTemporaryBaseID+2|unison.ContextMenuIDFlag,
-				"Select All", unison.KeyBinding{}, nil,
-				func(unison.MenuItem) { dependencyText.SelectAll() },
-			))
-		}
-		if menu.Count() == 0 {
-			menu.Dispose()
-			return nil
-		}
-		return menu
-	}
+	guiMakeFieldReadOnly(dependencyText)
 	dependencyScroll := unison.NewScrollPanel()
 	dependencyScroll.BackgroundInk = unison.RGB(255, 255, 255)
 	dependencyScroll.SetBorder(unison.NewLineBorder(guiBorderInk, geom.NewUniformSize(8), geom.NewUniformInsets(1), false))
@@ -235,6 +193,54 @@ func showGUIAboutDialog() {
 		dependencyScroll.SetPosition(0, 0)
 		dialog.FocusButton(0)
 		dialog.RunModal()
+	}
+}
+
+// guiMakeFieldReadOnly keeps mouse selection, navigation, and copying available without allowing edits.
+func guiMakeFieldReadOnly(field *unison.Field) {
+	field.NoSelectAllOnFocus = true
+	field.RuneTypedCallback = func(rune) bool { return true }
+	field.KeyDownCallback = func(keyCode unison.KeyCode, modifiers mod.Modifiers, repeat bool) bool {
+		if modifiers.OSMenuCommandDown() {
+			switch keyCode {
+			case unison.KeyA, unison.KeyC, unison.KeyLeft, unison.KeyRight, unison.KeyUp, unison.KeyDown:
+				return field.DefaultKeyDown(keyCode, modifiers, repeat)
+			default:
+				return true
+			}
+		}
+		switch keyCode {
+		case unison.KeyBackspace, unison.KeyDelete, unison.KeyReturn, unison.KeyNumPadEnter:
+			return true
+		default:
+			return field.DefaultKeyDown(keyCode, modifiers, repeat)
+		}
+	}
+	field.RemoveCmdHandler(unison.CutItemID)
+	field.RemoveCmdHandler(unison.PasteItemID)
+	field.RemoveCmdHandler(unison.DeleteItemID)
+	field.ContextMenuCallback = func(geom.Point) unison.Menu {
+		factory := unison.DefaultMenuFactory()
+		menu := factory.NewMenu(unison.PopupMenuTemporaryBaseID|unison.ContextMenuIDFlag, "", nil)
+		if field.CanCopy() {
+			menu.InsertItem(-1, factory.NewItem(
+				unison.PopupMenuTemporaryBaseID+1|unison.ContextMenuIDFlag,
+				"Copy", unison.KeyBinding{}, nil,
+				func(unison.MenuItem) { field.Copy() },
+			))
+		}
+		if field.CanSelectAll() {
+			menu.InsertItem(-1, factory.NewItem(
+				unison.PopupMenuTemporaryBaseID+2|unison.ContextMenuIDFlag,
+				"Select All", unison.KeyBinding{}, nil,
+				func(unison.MenuItem) { field.SelectAll() },
+			))
+		}
+		if menu.Count() == 0 {
+			menu.Dispose()
+			return nil
+		}
+		return menu
 	}
 }
 
@@ -348,15 +354,23 @@ func guiAddConnectionModeRow(card *unison.Panel, markerInk, modeFill, modeInk un
 	pathPanel.DrawCallback = func(canvas *unison.Canvas, rect geom.Rect) {
 		canvas.DrawRoundedRect(rect, geom.NewUniformSize(7), guiInputInk.Paint(canvas, rect, paintstyle.Fill))
 	}
-	pathLabel := unison.NewLabel()
-	pathLabel.Font = guistyle.MonospacedFont(9.5)
-	pathLabel.OnBackgroundInk = guiTextInk
-	pathLabel.SetLayoutData(&unison.FlexLayoutData{SizeHint: geom.NewSize(340, 0)})
-	pathPanel.AddChild(pathLabel)
+	pathField := unison.NewField()
+	pathField.Font = guistyle.MonospacedFont(9.5)
+	pathField.BackgroundInk = guiInputInk
+	pathField.EditableInk = guiInputInk
+	pathField.OnBackgroundInk = guiTextInk
+	pathField.OnEditableInk = guiTextInk
+	guiMakeFieldReadOnly(pathField)
+	unison.UninstallFocusBorders(pathField, pathField)
+	pathField.SetBorder(unison.NewEmptyBorder(geom.Insets{}))
+	pathField.SetLayoutData(&unison.FlexLayoutData{
+		HAlign: align.Fill, VAlign: align.Middle, HGrab: true, SizeHint: geom.NewSize(340, 0),
+	})
+	pathPanel.AddChild(pathField)
 	pathPanel.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, VAlign: align.Middle, HGrab: true})
 	pathAndCopy.AddChild(pathPanel)
 
-	copyButton := guistyle.NewIconButton(guistyle.CopyIcon, "Copy socket path")
+	copyButton := guistyle.NewIconButton(guistyle.CopyIcon, "Copy "+endpointName+" export command")
 	copyButton.BackgroundInk = guiCardInk
 	copyButton.EdgeInk = guiBorderInk
 	copyButton.CornerRadius = geom.NewUniformSize(7)
@@ -384,16 +398,24 @@ func guiAddConnectionModeRow(card *unison.Panel, markerInk, modeFill, modeInk un
 	card.AddChild(row)
 	update := func(currentEndpoint string, currentEffective transport.Mode, currentModeErr error) {
 		if currentEndpoint == "" {
-			pathLabel.SetTitle("Not configured")
-			pathLabel.Tooltip = nil
+			pathField.SetText("")
+			pathField.Watermark = "Not configured"
+			pathField.Tooltip = nil
 			copyButton.SetEnabled(false)
+			copyButton.ClickCallback = nil
 		} else {
 			displayPath := guiDisplayEndpointPath(currentEndpoint)
-			pathLabel.SetTitle(guiCompactEndpoint(displayPath, 56))
-			pathLabel.Tooltip = unison.NewTooltipWithText(displayPath)
+			pathField.SetText(displayPath)
+			pathField.Watermark = ""
+			pathField.Tooltip = unison.NewTooltipWithText(displayPath)
 			copyButton.SetEnabled(true)
-			copyButton.ClickCallback = func() { unison.ClipboardSetText(displayPath) }
+			copyButton.ClickCallback = func() {
+				// Copy the displayed path without extra escapes, using native Windows separators for clipboard text.
+				path := guiEndpointPathFromDisplay(pathField.Text())
+				unison.ClipboardSetText(fmt.Sprintf("export %s=\"%s\"", endpointName, path))
+			}
 		}
+		pathField.SetSelectionToStart()
 		modeDetails.RemoveAllChildren()
 		switch {
 		case currentEndpoint == "":
@@ -414,7 +436,7 @@ func guiMaxModeBadgeWidth() float32 {
 	font := guiFont(10.5, false)
 	widest := float32(0)
 	for _, title := range []string{
-		"Automatic", "Cygwin / Git for Windows", "Unix", "WSL1", "Named Pipe (Windows OpenSSH)",
+		"Auto Detection", "Cygwin / Git for Windows", "Unix", "WSL1", "Named Pipe (Windows OpenSSH)",
 		"Not configured", "Unavailable", "unknown",
 	} {
 		width := unison.NewText(title, &unison.TextDecoration{Font: font}).Width()
@@ -424,21 +446,10 @@ func guiMaxModeBadgeWidth() float32 {
 	return widest + 16 + 12
 }
 
-func guiCompactEndpoint(endpoint string, maxRunes int) string {
-	runes := []rune(endpoint)
-	if len(runes) <= maxRunes || maxRunes < 5 {
-		return endpoint
-	}
-	remaining := maxRunes - 1
-	left := remaining / 2
-	right := remaining - left
-	return string(runes[:left]) + "…" + string(runes[len(runes)-right:])
-}
-
 func guiDisplayModeName(mode transport.Mode) string {
 	switch mode {
 	case transport.Auto:
-		return "Automatic"
+		return "Auto Detection"
 	case transport.Unix:
 		return "Unix"
 	case transport.Cygwin:

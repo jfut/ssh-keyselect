@@ -368,13 +368,13 @@ func showTrayMenu(window uintptr, callbacks Callbacks) {
 		return
 	}
 	defer func() { _, _, _ = destroyMenu.Call(menu) }()
-	if err := appendMenuItem(menu, trayMenuShow, "表示"); err != nil {
+	if err := appendMenuItem(menu, trayMenuShow, "Show"); err != nil {
 		return
 	}
-	if err := appendMenuItem(menu, trayMenuRefresh, "鍵一覧取得"); err != nil {
+	if err := appendMenuItem(menu, trayMenuRefresh, "Refresh Keys"); err != nil {
 		return
 	}
-	if err := appendMenuItem(menu, trayMenuQuit, "終了"); err != nil {
+	if err := appendMenuItem(menu, trayMenuQuit, "Quit"); err != nil {
 		return
 	}
 	var position winPoint

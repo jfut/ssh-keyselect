@@ -613,7 +613,8 @@ func guiNewEndpointBrowseButton() *unison.Button {
 
 func guiNewTransportModePopup(current transport.Mode, includeAutomatic bool) *unison.PopupMenu[string] {
 	popup := unison.NewPopupMenu[string]()
-	popup.Font = guiFont(10, false)
+	// Keep the selected value and the expanded menu on the same font.
+	popup.Font = unison.DefaultMenuItemTheme.TitleFont
 	popup.ItemRendererCallback = func(mode string) string {
 		return guiDisplayModeName(transport.Mode(mode))
 	}

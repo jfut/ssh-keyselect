@@ -36,6 +36,8 @@ dnf install ssh-keyselect
 
 Start the GUI first, then set `SSH_AUTH_SOCK` to the Listen endpoint shown in its main window. On Linux and macOS, the default endpoint is `$HOME/.ssh/ssh-keyselect-agent.sock`.
 
+Select text in the socket path fields to copy a path or part of it. The Upstream copy icon copies `export UPSTREAM_SSH_AUTH_SOCK="..."`; the Listen icon copies `export SSH_AUTH_SOCK="..."`. Both use the displayed path without adding escapes. On Windows, paths are copied with native backslash separators.
+
 For Git Bash ([Git for Windows](https://gitforwindows.org/)), macOS, and Linux:
 
 ```bash

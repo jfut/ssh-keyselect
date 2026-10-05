@@ -55,11 +55,11 @@ func (s *Server) AutoSelect() bool {
 
 // Serve accepts frontend connections until ctx is cancelled or the listener fails.
 func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
-	return s.serve(ctx, listener, maxClientConnections, clientFrameReadTimeout)
+	return s.serve(ctx, listener, maxClientConnections, clientFrameReadTimeout, upstream.RequestTimeout)
 }
 
 // serve lets tests use fewer connections and shorter deadlines without changing production limits.
-func (s *Server) serve(ctx context.Context, listener net.Listener, connectionLimit int, frameReadTimeout time.Duration) error {
+func (s *Server) serve(ctx context.Context, listener net.Listener, connectionLimit int, frameReadTimeout, requestTimeout time.Duration) error {
 	if s.Agent == nil || s.Selector == nil || listener == nil {
 		return errors.New("agent proxy is not fully configured")
 	}
@@ -93,6 +93,7 @@ func (s *Server) serve(ctx context.Context, listener net.Listener, connectionLim
 			}
 			return fmt.Errorf("accept frontend connection: %w", err)
 		}
+		handshake, needsHandshake := conn.(interface{ Handshake() error })
 		mu.Lock()
 		if ctx.Err() != nil {
 			mu.Unlock()
@@ -102,7 +103,10 @@ func (s *Server) serve(ctx context.Context, listener net.Listener, connectionLim
 		if len(active) >= connectionLimit {
 			mu.Unlock()
 			_ = conn.Close()
-			logger.Warn("rejected client connection at connection limit", "limit", connectionLimit)
+			// Unauthenticated loopback peers must not turn overload rejection into a log flood.
+			if !needsHandshake {
+				logger.Warn("rejected client connection at connection limit", "limit", connectionLimit)
+			}
 			continue
 		}
 		active[conn] = struct{}{}
@@ -122,12 +126,18 @@ func (s *Server) serve(ctx context.Context, listener net.Listener, connectionLim
 					logger.Error("client handler recovered from panic", "session", sessionID)
 				}
 			}()
-			s.handleConnection(ctx, conn, sessionID, logger, frameReadTimeout)
+			// Count transport authentication in admission, without logging unauthenticated peers as clients.
+			if needsHandshake {
+				if err := handshake.Handshake(); err != nil {
+					return
+				}
+			}
+			s.handleConnection(ctx, conn, sessionID, logger, frameReadTimeout, requestTimeout)
 		}()
 	}
 }
 
-func (s *Server) handleConnection(parent context.Context, conn net.Conn, sessionID string, logger *slog.Logger, frameReadTimeout time.Duration) {
+func (s *Server) handleConnection(parent context.Context, conn net.Conn, sessionID string, logger *slog.Logger, frameReadTimeout, requestTimeout time.Duration) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	log := logger.With("session", sessionID)
@@ -197,7 +207,7 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 					return
 				}
 				if cachedResponse == nil {
-					available, err := listAgent(ctx, s.Agent, upstreamSessionBinds)
+					available, err := listAgent(ctx, s.Agent, upstreamSessionBinds, requestTimeout)
 					var chosen []identity.Identity
 					if err == nil {
 						chosen, err = s.selectAvailableIdentities(ctx, log, selectionContext(sessionBinds), available)
@@ -273,7 +283,7 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 					}
 					continue
 				}
-				err = bindAgentSessionChain(ctx, s.Agent, upstreamSessionBinds, binding.raw)
+				err = bindAgentSessionChain(ctx, s.Agent, upstreamSessionBinds, binding.raw, requestTimeout)
 				if err != nil {
 					upstreamSessionBindingRejected = true
 					log.Warn("upstream agent rejected SSH session binding", "error", err)
@@ -307,7 +317,7 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 					continue
 				}
 				log.Info("signature requested", "fingerprint", identity.Fingerprint(keyBlob))
-				response, err := roundTripAgent(ctx, s.Agent, upstreamSessionBinds, message)
+				response, err := roundTripAgent(ctx, s.Agent, upstreamSessionBinds, message, requestTimeout)
 				if err != nil {
 					if ctx.Err() != nil {
 						return
@@ -411,8 +421,8 @@ func hasSessionID(bindings []verifiedSessionBind, sessionID []byte) bool {
 
 // Bound operations replay their verified chain on short-lived connections so
 // an interactive picker never leaves an upstream agent socket idle.
-func listAgent(ctx context.Context, agent upstream.Agent, bindings [][]byte) ([]identity.Identity, error) {
-	requestCtx, cancel := context.WithTimeout(ctx, upstream.RequestTimeout)
+func listAgent(ctx context.Context, agent upstream.Agent, bindings [][]byte, requestTimeout time.Duration) ([]identity.Identity, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	if len(bindings) == 0 {
 		return agent.List(requestCtx)
@@ -425,8 +435,8 @@ func listAgent(ctx context.Context, agent upstream.Agent, bindings [][]byte) ([]
 	return session.List(requestCtx)
 }
 
-func bindAgentSessionChain(ctx context.Context, agent upstream.Agent, bindings [][]byte, binding []byte) error {
-	requestCtx, cancel := context.WithTimeout(ctx, upstream.RequestTimeout)
+func bindAgentSessionChain(ctx context.Context, agent upstream.Agent, bindings [][]byte, binding []byte, requestTimeout time.Duration) error {
+	requestCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	session, err := openBoundSession(requestCtx, agent, bindings)
 	if err != nil {
@@ -436,12 +446,9 @@ func bindAgentSessionChain(ctx context.Context, agent upstream.Agent, bindings [
 	return session.Bind(requestCtx, binding)
 }
 
-// Bound connection setup has a deadline, while signing approval follows the client's lifetime.
-func roundTripAgent(ctx context.Context, agent upstream.Agent, bindings [][]byte, request []byte) ([]byte, error) {
-	if len(bindings) == 0 {
-		return agent.RoundTrip(ctx, request)
-	}
-	setupCtx, cancel := context.WithTimeout(ctx, upstream.RequestTimeout)
+// Connection setup and binding replay have a deadline, while signing approval follows the client's lifetime.
+func roundTripAgent(ctx context.Context, agent upstream.Agent, bindings [][]byte, request []byte, requestTimeout time.Duration) ([]byte, error) {
+	setupCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	session, err := openBoundSession(setupCtx, agent, bindings)
 	cancel()
 	if err != nil {

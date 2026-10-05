@@ -7,7 +7,7 @@ package upstream
 
 import (
 	"context"
-	"net"
+	"io"
 	"path/filepath"
 	"testing"
 	"time"
@@ -29,12 +29,21 @@ func TestDialEndpointConnectsToGitBashSocket(t *testing.T) {
 	}
 	defer cleanup()
 
-	accepted := make(chan net.Conn, 1)
+	accepted := make(chan error, 1)
 	go func() {
 		conn, acceptErr := ln.Accept()
-		if acceptErr == nil {
-			accepted <- conn
+		if acceptErr != nil {
+			accepted <- acceptErr
+			return
 		}
+		defer func() { _ = conn.Close() }()
+		// The first I/O completes authentication and verifies the accepted connection carries agent data.
+		var payload [1]byte
+		_, err := io.ReadFull(conn, payload[:])
+		if err == nil {
+			_, err = conn.Write(payload[:])
+		}
+		accepted <- err
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -43,9 +52,21 @@ func TestDialEndpointConnectsToGitBashSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = conn.Close() }()
+	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write([]byte{'x'}); err != nil {
+		t.Fatal(err)
+	}
+	var response [1]byte
+	if _, err := io.ReadFull(conn, response[:]); err != nil || response[0] != 'x' {
+		t.Fatalf("Git Bash socket response = %q, %v; want x", response, err)
+	}
 	select {
-	case acceptedConn := <-accepted:
-		_ = acceptedConn.Close()
+	case err := <-accepted:
+		if err != nil {
+			t.Fatal(err)
+		}
 	case <-ctx.Done():
 		t.Fatal("Git Bash socket connection was not accepted")
 	}

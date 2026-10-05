@@ -8,7 +8,6 @@ package winsocket
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,54 +16,6 @@ import (
 	"testing"
 	"time"
 )
-
-func TestListenerCloseInterruptsPendingHandshake(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "agent.sock")
-	listener, cleanup, err := Listen(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(cleanup)
-	info, err := read(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	accepted := make(chan error, 1)
-	go func() {
-		conn, err := listener.Accept()
-		if conn != nil {
-			_ = conn.Close()
-		}
-		accepted <- err
-	}()
-	conn, err := net.DialTimeout("tcp4", listener.Addr().String(), time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := conn.Write(info.GUIDData[:]); err != nil {
-		t.Fatal(err)
-	}
-	var challenge [16]byte
-	if _, err := io.ReadFull(conn, challenge[:]); err != nil || challenge != info.GUIDData {
-		t.Fatalf("server handshake = %x, %v; want the socket token", challenge, err)
-	}
-	// The echoed token proves Accept is waiting for client information, not for TCP admission.
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-accepted:
-		if !errors.Is(err, net.ErrClosed) {
-			t.Fatalf("Accept after close = %v, want a closed listener", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("closing the listener left a handshake blocked")
-	}
-}
 
 func TestDialCancellationInterruptsHandshake(t *testing.T) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")

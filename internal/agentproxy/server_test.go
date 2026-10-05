@@ -497,7 +497,7 @@ func TestIncompleteFrameTimeoutUnblocksResponseWrites(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		proxy.handleConnection(ctx, serverConn, "blocked-write", proxy.logger(), timeout)
+		proxy.handleConnection(ctx, serverConn, "blocked-write", proxy.logger(), timeout, upstream.RequestTimeout)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -650,7 +650,7 @@ func startProxyTestServer(t *testing.T, server *Server, connectionLimit int, fra
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		result <- server.serve(ctx, endpoint.listener, connectionLimit, frameReadTimeout)
+		result <- server.serve(ctx, endpoint.listener, connectionLimit, frameReadTimeout, upstream.RequestTimeout)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -700,7 +700,7 @@ func newPipeSession(t *testing.T, agent *fakeAgent, chooser selector.Selector) (
 	go func() {
 		defer close(done)
 		defer func() { _ = serverConn.Close() }()
-		server.handleConnection(ctx, serverConn, "test", server.Logger, clientFrameReadTimeout)
+		server.handleConnection(ctx, serverConn, "test", server.Logger, clientFrameReadTimeout, upstream.RequestTimeout)
 	}()
 	cleanup := func() {
 		cancel()

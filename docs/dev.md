@@ -123,6 +123,8 @@ CLI identity tables, terminal picker rows, shared GUI key rows and their clipboa
 
 Each proxy listener allows up to 128 concurrent client connections; additional connections are closed immediately. Admission counts each connection until both its request handler and frame reader have stopped.
 
+Signing requests from separate client connections run concurrently through independent upstream connections. One client's approval wait does not block another client's signing request. Requests and responses within a client connection remain ordered.
+
 Once a client starts sending an agent frame, it must finish within 10 seconds or the connection is closed. The read deadline starts after the first frame byte, is not extended by partial reads, and is cleared after a complete frame. It does not limit idle connections or time spent choosing a key.
 
 Clients should wait for each response before sending another request. The frame reader runs separately so a disconnect or an incomplete-frame timeout can cancel an open picker. It queues at most one complete request and closes the client if another arrives while the queue is full, so delivery to the handler never blocks client monitoring.
@@ -135,7 +137,7 @@ Unix listener cleanup unlinks only the socket it created, after checking filesys
 
 The `cygwin` transport reads the socket file's endpoint information and connects through loopback TCP using the file's GUID handshake. The `wsl1` transport uses Windows AF_UNIX sockets with paths translated from `/mnt/<drive>/...`. The `named-pipe` mode uses Windows OpenSSH named pipes. Native Windows and shell-specific defaults are implemented in platform-suffixed files under `internal/listener`, `internal/upstream`, `internal/winpath`, and `cmd/ssh-keyselect-gui`.
 
-Cygwin socket metadata reads are capped at 256 bytes. Dial cancellation interrupts the handshake, and listener shutdown closes connections whose handshakes are still pending so that shutdown does not wait for the handshake deadline.
+Cygwin socket metadata reads are capped at 256 bytes. The listener immediately returns a connection whose handshake runs independently in the proxy's per-connection handler, after admission and before normal client logging or agent request handling. Connection reads and writes also enforce authentication before passing any agent traffic. Unauthenticated connections count against the proxy's 128-client limit, and their rejection does not generate client or overload logs. The transport also caps pending handshakes at 128 and closes excess connections. Each pending handshake expires 10 seconds after admission, even if connection I/O has not started. Authentication stops that timer without imposing a deadline on later signing approval waits. Dial cancellation interrupts the handshake, and listener shutdown closes every pending handshake immediately.
 
 The CLI and GUI use the same endpoint comparison before binding. On Windows, native paths, Git Bash drive mounts, Cygwin `/cygdrive/` paths, and WSL1 drive mounts resolve through `internal/winpath`; named-pipe names and native paths compare without case sensitivity.
 
@@ -184,6 +186,8 @@ just snapshot
 Frontend connection-limit tests pass a cap of four connections to the shared serving implementation. This exercises admission, rejection, and slot reuse through real sockets without exhausting small file-descriptor budgets, while production `Serve` allows up to 128 connections.
 
 Frontend timeout tests pass a 200 ms frame deadline to the shared serving and connection-handling implementation, so they exercise cancellation and socket cleanup without waiting for the production `Serve` deadline of 10 seconds. Each test supplies its own limits; no global limits are changed.
+
+Signing approval tests pass a 200 ms upstream setup deadline and withhold approval for 300 ms. This checks that signing waits can exceed the setup deadline, for both bound and unbound sessions, without waiting for the production 10-second deadline. The tests use real transport connections and also verify cancellation when the client disconnects.
 
 Run `just deps-credits` after changing Go dependencies or the supported target operating systems. It installs a pinned `go-licenses` into a temporary directory, scans Linux, macOS, and Windows builds with the GUI tag, and regenerates `internal/credits/dependencies.txt` and `CREDITS`. The scanner is used because it can report GUI-tagged and platform-specific imports in each build. Check the output for newly introduced or changed licenses. The generated `CREDITS` includes third-party license texts and the licenses for fonts embedded by Unison.
 

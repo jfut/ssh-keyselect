@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the ssh-keyselect project.
 
-// Package winsocket implements Windows-compatible agent socket-file transports.
 package winsocket
 
 import (
@@ -19,7 +18,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -166,82 +164,14 @@ func Listen(path string) (net.Listener, func(), error) {
 		_ = tcpListener.Close()
 		return nil, nil, fmt.Errorf("inspect compatibility socket file: %w", err)
 	}
-	ln := &cygwinListener{
-		listener: tcpListener, path: nativePath, fileInfo: fileInfo, guid: guidData,
-		handshakes: make(map[net.Conn]struct{}),
-	}
+	ln := newCygwinListener(tcpListener, guidData, func() {
+		if current, err := os.Stat(nativePath); err == nil && os.SameFile(fileInfo, current) {
+			_ = os.Remove(nativePath)
+		}
+	})
 	cleanup := func() { _ = ln.Close() }
 	return ln, cleanup, nil
 }
-
-type cygwinListener struct {
-	listener   *net.TCPListener
-	path       string
-	fileInfo   os.FileInfo
-	guid       [16]byte
-	closeOnce  sync.Once
-	closeErr   error
-	mu         sync.Mutex
-	closed     bool
-	handshakes map[net.Conn]struct{}
-}
-
-func (l *cygwinListener) Accept() (net.Conn, error) {
-	for {
-		conn, err := l.listener.AcceptTCP()
-		if err != nil {
-			return nil, err
-		}
-		l.mu.Lock()
-		if l.closed {
-			l.mu.Unlock()
-			_ = conn.Close()
-			return nil, net.ErrClosed
-		}
-		l.handshakes[conn] = struct{}{}
-		l.mu.Unlock()
-		err = conn.SetDeadline(time.Now().Add(10 * time.Second))
-		if err == nil {
-			err = cygwinServerHandshake(conn, l.guid)
-		}
-		l.mu.Lock()
-		delete(l.handshakes, conn)
-		closed := l.closed
-		l.mu.Unlock()
-		if closed {
-			_ = conn.Close()
-			return nil, net.ErrClosed
-		}
-		if err != nil {
-			_ = conn.Close()
-			continue
-		}
-		if err := conn.SetDeadline(time.Time{}); err != nil {
-			_ = conn.Close()
-			continue
-		}
-		return conn, nil
-	}
-}
-
-func (l *cygwinListener) Close() error {
-	l.closeOnce.Do(func() {
-		// Closing the listener must release handshakes that have not reached the proxy yet.
-		l.mu.Lock()
-		l.closed = true
-		l.closeErr = l.listener.Close()
-		for conn := range l.handshakes {
-			_ = conn.Close()
-		}
-		l.mu.Unlock()
-		if current, err := os.Stat(l.path); err == nil && os.SameFile(l.fileInfo, current) {
-			_ = os.Remove(l.path)
-		}
-	})
-	return l.closeErr
-}
-
-func (l *cygwinListener) Addr() net.Addr { return l.listener.Addr() }
 
 func makeSocketFile(portText, guidText string) (socketFile, error) {
 	port, err := strconv.ParseUint(portText, 10, 16)
@@ -326,46 +256,10 @@ func cygwinClientHandshake(ctx context.Context, conn net.Conn, guid [16]byte) er
 	return nil
 }
 
-func cygwinServerHandshake(conn net.Conn, guid [16]byte) error {
-	var challenge [16]byte
-	if _, err := io.ReadFull(conn, challenge[:]); err != nil {
-		return fmt.Errorf("read Cygwin socket handshake: %w", err)
-	}
-	if challenge != guid {
-		return fmt.Errorf("cygwin socket handshake GUID did not match")
-	}
-	if err := writeAll(conn, guid[:]); err != nil {
-		return fmt.Errorf("write Cygwin socket handshake: %w", err)
-	}
-	var clientInfo [12]byte
-	if _, err := io.ReadFull(conn, clientInfo[:]); err != nil {
-		return fmt.Errorf("read Cygwin client information: %w", err)
-	}
-	binary.LittleEndian.PutUint32(clientInfo[:4], uint32(os.Getpid()))
-	if err := writeAll(conn, clientInfo[:]); err != nil {
-		return fmt.Errorf("write Cygwin client information: %w", err)
-	}
-	return nil
-}
-
 func setSystemFileAttribute(path string) error {
 	pathPointer, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return err
 	}
 	return windows.SetFileAttributes(pathPointer, windows.FILE_ATTRIBUTE_ARCHIVE|windows.FILE_ATTRIBUTE_SYSTEM)
-}
-
-func writeAll(conn net.Conn, data []byte) error {
-	for len(data) > 0 {
-		n, err := conn.Write(data)
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return io.ErrShortWrite
-		}
-		data = data[n:]
-	}
-	return nil
 }

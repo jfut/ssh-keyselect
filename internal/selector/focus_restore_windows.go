@@ -87,10 +87,10 @@ func activateForegroundTarget(hwnd windows.HWND, expectedProcessID uint32) bool 
 		return false
 	}
 	if result, _, _ := foregroundIsIconicWindow.Call(uintptr(hwnd)); result != 0 {
-		foregroundShowWindowAsync.Call(uintptr(hwnd), foregroundRestoreWindow)
+		_, _, _ = foregroundShowWindowAsync.Call(uintptr(hwnd), foregroundRestoreWindow)
 	}
-	foregroundBringWindowToTop.Call(uintptr(hwnd))
-	setForegroundWindow.Call(uintptr(hwnd))
+	_, _, _ = foregroundBringWindowToTop.Call(uintptr(hwnd))
+	_, _, _ = setForegroundWindow.Call(uintptr(hwnd))
 	current := windows.GetForegroundWindow()
 	if current == 0 {
 		return false

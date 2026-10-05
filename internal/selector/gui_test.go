@@ -25,7 +25,7 @@ import (
 func TestStoppedGUISelectorCancelsWithoutStartingTheUI(t *testing.T) {
 	gui := NewGUISelector()
 	gui.Stop()
-	_, err := gui.Select(context.Background(), []identity.Identity{{Comment: "key"}})
+	_, err := gui.Select(context.Background(), []identity.Identity{{Comment: "key"}}, SelectionContext{})
 	if !errors.Is(err, ErrCancelled) {
 		t.Fatalf("Select error = %v, want cancellation", err)
 	}

@@ -31,7 +31,7 @@ type HostBinding struct {
 	IsForwarding bool
 }
 
-// SelectionContext carries verified connection details to selectors that can display them.
+// SelectionContext carries verified connection details to the identity picker.
 type SelectionContext struct {
 	HostBindings []HostBinding
 }
@@ -101,12 +101,7 @@ func selectionTreeLines(requestContext SelectionContext) []selectionTreeLine {
 	return lines
 }
 
-// ContextualSelector can show SSH connection metadata with its identity picker.
-type ContextualSelector interface {
-	SelectWithContext(context.Context, []identity.Identity, SelectionContext) ([]identity.Identity, error)
-}
-
 // Selector chooses one or more public identities for a client session.
 type Selector interface {
-	Select(context.Context, []identity.Identity) ([]identity.Identity, error)
+	Select(context.Context, []identity.Identity, SelectionContext) ([]identity.Identity, error)
 }

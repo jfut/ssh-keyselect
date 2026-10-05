@@ -19,6 +19,7 @@ import (
 	"github.com/jfut/ssh-keyselect/internal/guistyle"
 	"github.com/jfut/ssh-keyselect/internal/guiwindow"
 	"github.com/jfut/ssh-keyselect/internal/identity"
+	"github.com/jfut/ssh-keyselect/internal/upstream"
 	"github.com/richardwilkes/toolbox/v2/geom"
 	"github.com/richardwilkes/unison"
 	"github.com/richardwilkes/unison/enums/align"
@@ -74,13 +75,8 @@ func (s *GUISelector) Stop() {
 	s.stopOnce.Do(func() { close(s.stopped) })
 }
 
-// Select displays a topmost window and waits for one identity or cancellation.
-func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity) ([]identity.Identity, error) {
-	return s.SelectWithContext(ctx, identities, SelectionContext{})
-}
-
-// SelectWithContext displays the accepted SSH host-key path alongside the identity picker.
-func (s *GUISelector) SelectWithContext(ctx context.Context, identities []identity.Identity, requestContext SelectionContext) ([]identity.Identity, error) {
+// Select displays the accepted SSH host-key path alongside the identity picker.
+func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity, requestContext SelectionContext) ([]identity.Identity, error) {
 	if len(identities) == 0 {
 		return nil, nil
 	}
@@ -290,37 +286,8 @@ func guiNewSelectionWindow(
 			window.StopModal(unison.ModalResponseOK)
 		}
 	}
-	selectedIdentityRow := func() (*guiidentitytable.Row, bool) {
-		selected := tableView.Table.LeadRowIndex()
-		rows := tableView.Table.RootRows()
-		if selected < 0 || selected >= len(rows) {
-			return nil, false
-		}
-		return rows[selected], true
-	}
-	copySelectedIdentity := func() bool {
-		row, ok := selectedIdentityRow()
-		if !ok {
-			return false
-		}
-		unison.ClipboardSetText(row.CopyText())
-		return true
-	}
-	tableView.Table.ContextMenuCallback = func(geom.Point) unison.Menu {
-		row, ok := selectedIdentityRow()
-		if !ok {
-			return nil
-		}
-		factory := unison.DefaultMenuFactory()
-		menu := factory.NewMenu(unison.PopupMenuTemporaryBaseID|unison.ContextMenuIDFlag, "", nil)
-		menu.InsertItem(-1, factory.NewItem(
-			unison.PopupMenuTemporaryBaseID+1|unison.ContextMenuIDFlag,
-			"Copy", unison.KeyBinding{}, nil,
-			func(unison.MenuItem) { unison.ClipboardSetText(row.CopyText()) },
-		))
-		return menu
-	}
 	tableView.Table.DoubleClickCallback = selectCurrent
+	tableKeyDown := tableView.Table.KeyDownCallback
 	tableView.Table.KeyDownCallback = func(keyCode unison.KeyCode, modifiers mod.Modifiers, repeat bool) bool {
 		switch keyCode {
 		case unison.KeyReturn, unison.KeyNumPadEnter:
@@ -329,14 +296,9 @@ func guiNewSelectionWindow(
 		case unison.KeyEscape:
 			window.StopModal(unison.ModalResponseCancel)
 			return true
-		case unison.KeyC:
-			if modifiers.OSMenuCommandDown() && copySelectedIdentity() {
-				return true
-			}
 		default:
-			return tableView.Table.DefaultKeyDown(keyCode, modifiers, repeat)
+			return tableKeyDown(keyCode, modifiers, repeat)
 		}
-		return false
 	}
 	filter.ModifiedCallback = func(_, after *unison.FieldState) { refreshChoices(after.Text) }
 	filter.KeyDownCallback = func(keyCode unison.KeyCode, modifiers mod.Modifiers, repeat bool) bool {
@@ -360,7 +322,7 @@ func guiNewSelectionWindow(
 			}
 			return filter.DefaultKeyDown(keyCode, modifiers, repeat)
 		case unison.KeyC:
-			if modifiers.OSMenuCommandDown() && copySelectedIdentity() {
+			if modifiers.OSMenuCommandDown() && tableView.CopySelection() {
 				return true
 			}
 			return filter.DefaultKeyDown(keyCode, modifiers, repeat)
@@ -375,7 +337,7 @@ func guiNewSelectionWindow(
 		}
 		refreshButton.SetEnabled(false)
 		go func() {
-			refreshCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			refreshCtx, cancel := context.WithTimeout(ctx, upstream.RequestTimeout)
 			defer cancel()
 			updated, refreshErr := refreshIdentities(refreshCtx)
 			unison.InvokeTask(func() {
@@ -394,7 +356,7 @@ func guiNewSelectionWindow(
 				refreshChoices(filter.Text())
 				scroller.SetLayoutData(guiidentitytable.ScrollLayoutData(len(identities), 7))
 				contentRect := window.ContentRect()
-				contentRect.Size.Height = guiSelectionWindowHeight(len(identities), fingerprintFont, requestContext)
+				contentRect.Height = guiSelectionWindowHeight(len(identities), fingerprintFont, requestContext)
 				window.SetContentRect(contentRect)
 				guiwindow.CenterOnPrimaryDisplay(window)
 			})
@@ -425,16 +387,14 @@ func guiNewSelectionDetailsArea(window *unison.Window, requestContext SelectionC
 	detailsField.OnEditableInk = textInk
 	detailsField.SelectionInk = unison.ThemeFocus
 	detailsField.OnSelectionInk = unison.ThemeOnFocus
-	detailsField.NoSelectAllOnFocus = true
-	detailsField.RuneTypedCallback = func(rune) bool { return true }
+	guistyle.MakeFieldReadOnly(detailsField)
+	readOnlyKeyDown := detailsField.KeyDownCallback
 	detailsField.KeyDownCallback = func(keyCode unison.KeyCode, modifiers mod.Modifiers, repeat bool) bool {
-		return guiDetailsFieldKeyDown(window, detailsField, keyCode, modifiers, repeat)
-	}
-	for _, command := range []int{unison.CutItemID, unison.PasteItemID, unison.DeleteItemID} {
-		detailsField.RemoveCmdHandler(command)
-	}
-	detailsField.ContextMenuCallback = func(geom.Point) unison.Menu {
-		return guiDetailsFieldContextMenu(detailsField)
+		if keyCode == unison.KeyEscape {
+			window.StopModal(unison.ModalResponseCancel)
+			return true
+		}
+		return readOnlyKeyDown(keyCode, modifiers, repeat)
 	}
 	// Keep the field selectable and copyable while making its contents read-only.
 	unison.UninstallFocusBorders(detailsField, detailsField)
@@ -466,51 +426,6 @@ func guiSelectionDetailsText(requestContext SelectionContext, shownAt time.Time)
 		}
 	}
 	return text.String()
-}
-
-func guiDetailsFieldKeyDown(window *unison.Window, field *unison.Field, keyCode unison.KeyCode, modifiers mod.Modifiers, repeat bool) bool {
-	if keyCode == unison.KeyEscape {
-		window.StopModal(unison.ModalResponseCancel)
-		return true
-	}
-	if modifiers.OSMenuCommandDown() {
-		switch keyCode {
-		case unison.KeyA, unison.KeyC, unison.KeyLeft, unison.KeyRight, unison.KeyUp, unison.KeyDown:
-			return field.DefaultKeyDown(keyCode, modifiers, repeat)
-		default:
-			return true
-		}
-	}
-	switch keyCode {
-	case unison.KeyBackspace, unison.KeyDelete, unison.KeyReturn, unison.KeyNumPadEnter:
-		return true
-	default:
-		return field.DefaultKeyDown(keyCode, modifiers, repeat)
-	}
-}
-
-func guiDetailsFieldContextMenu(field *unison.Field) unison.Menu {
-	factory := unison.DefaultMenuFactory()
-	menu := factory.NewMenu(unison.PopupMenuTemporaryBaseID|unison.ContextMenuIDFlag, "", nil)
-	if field.CanCopy() {
-		menu.InsertItem(-1, factory.NewItem(
-			unison.PopupMenuTemporaryBaseID+1|unison.ContextMenuIDFlag,
-			"Copy", unison.KeyBinding{}, nil,
-			func(unison.MenuItem) { field.Copy() },
-		))
-	}
-	if field.CanSelectAll() {
-		menu.InsertItem(-1, factory.NewItem(
-			unison.PopupMenuTemporaryBaseID+2|unison.ContextMenuIDFlag,
-			"Select All", unison.KeyBinding{}, nil,
-			func(unison.MenuItem) { field.SelectAll() },
-		))
-	}
-	if menu.Count() == 0 {
-		menu.Dispose()
-		return nil
-	}
-	return menu
 }
 
 func guiSelectionDetailsTextAreaHeight(requestContext SelectionContext) float32 {
@@ -551,4 +466,3 @@ func guiAvailableIdentityMetadata(offered, current []identity.Identity) []identi
 }
 
 var _ Selector = (*GUISelector)(nil)
-var _ ContextualSelector = (*GUISelector)(nil)

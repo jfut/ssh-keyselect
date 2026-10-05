@@ -78,6 +78,7 @@ func sessionKnownHostNames(hostKey ssh.PublicKey) []string {
 	}
 
 	const maxNames = 8
+	hostKeyBlob := hostKey.Marshal()
 	seen := make(map[string]struct{})
 	var names []string
 	for _, path := range paths {
@@ -92,8 +93,8 @@ func sessionKnownHostNames(hostKey ssh.PublicKey) []string {
 			if len(line) == 0 || line[0] == '#' {
 				continue
 			}
-			marker, hosts, key, _, _, err := ssh.ParseKnownHosts(append(bytes.Clone(line), '\n'))
-			if err != nil || marker != "" || key == nil || !bytes.Equal(key.Marshal(), hostKey.Marshal()) {
+			marker, hosts, key, _, _, err := ssh.ParseKnownHosts(line)
+			if err != nil || marker != "" || key == nil || !bytes.Equal(key.Marshal(), hostKeyBlob) {
 				continue
 			}
 			for _, name := range hosts {

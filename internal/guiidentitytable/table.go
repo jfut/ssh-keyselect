@@ -17,6 +17,7 @@ import (
 	"github.com/richardwilkes/unison"
 	"github.com/richardwilkes/unison/enums/align"
 	"github.com/richardwilkes/unison/enums/behavior"
+	"github.com/richardwilkes/unison/enums/mod"
 )
 
 const (
@@ -75,12 +76,11 @@ func New(numbered bool) *View {
 			unison.ColumnInfo{ID: 4, Current: 360, Minimum: 180},
 		)
 	} else {
-		base := len(columns)
 		columns = append(columns,
-			unison.ColumnInfo{ID: base, Current: 320, Minimum: 190},
-			unison.ColumnInfo{ID: base + 1, Current: 140, Minimum: 100},
-			unison.ColumnInfo{ID: base + 2, Current: 76, Minimum: 60},
-			unison.ColumnInfo{ID: base + 3, Current: 390, Minimum: 220},
+			unison.ColumnInfo{ID: 0, Current: 320, Minimum: 190},
+			unison.ColumnInfo{ID: 1, Current: 140, Minimum: 100},
+			unison.ColumnInfo{ID: 2, Current: 76, Minimum: 60},
+			unison.ColumnInfo{ID: 3, Current: 390, Minimum: 220},
 		)
 	}
 	table.Columns = columns
@@ -137,7 +137,48 @@ func New(numbered bool) *View {
 		// Header constructors capture font metrics, so rebuild the text after styling.
 		columnHeader.SetTitle(columnHeader.String())
 	}
-	return &View{Table: table, header: header, numbered: numbered}
+	view := &View{Table: table, header: header, numbered: numbered}
+	// Both GUI tables expose the same copy action; pickers can extend these key bindings.
+	table.ContextMenuCallback = func(geom.Point) unison.Menu {
+		row := view.selectedRow()
+		if row == nil {
+			return nil
+		}
+		factory := unison.DefaultMenuFactory()
+		menu := factory.NewMenu(unison.PopupMenuTemporaryBaseID|unison.ContextMenuIDFlag, "", nil)
+		menu.InsertItem(-1, factory.NewItem(
+			unison.PopupMenuTemporaryBaseID+1|unison.ContextMenuIDFlag,
+			"Copy", unison.KeyBinding{}, nil,
+			func(unison.MenuItem) { unison.ClipboardSetText(row.copyText()) },
+		))
+		return menu
+	}
+	table.KeyDownCallback = func(keyCode unison.KeyCode, modifiers mod.Modifiers, repeat bool) bool {
+		if keyCode == unison.KeyC && modifiers.OSMenuCommandDown() && view.CopySelection() {
+			return true
+		}
+		return table.DefaultKeyDown(keyCode, modifiers, repeat)
+	}
+	return view
+}
+
+func (v *View) selectedRow() *Row {
+	selected := v.Table.LeadRowIndex()
+	rows := v.Table.RootRows()
+	if selected < 0 || selected >= len(rows) {
+		return nil
+	}
+	return rows[selected]
+}
+
+// CopySelection also lets the picker's filter field copy the current table row.
+func (v *View) CopySelection() bool {
+	row := v.selectedRow()
+	if row == nil {
+		return false
+	}
+	unison.ClipboardSetText(row.copyText())
+	return true
 }
 
 // AttachTo installs this table and its column header in the supplied scroll panel using the status window's card edge.
@@ -180,7 +221,6 @@ func (v *View) SetEntries(entries []Entry) {
 			table:       v.Table,
 			id:          tid.MustNewTID('k'),
 			numbered:    v.numbered,
-			number:      "",
 			size:        identity.DisplayBitSize(id.Blob, id.Algorithm),
 			algorithm:   id.Algorithm,
 			fingerprint: id.Fingerprint,
@@ -234,35 +274,26 @@ func (r *Row) SetOpen(bool)          {}
 
 func (r *Row) CellDataForSort(column int) string {
 	if r.numbered {
-		switch column {
-		case 0:
+		if column == 0 {
 			return r.number
-		case 1:
-			return r.comment
-		case 2:
-			return r.algorithm
-		case 3:
-			return r.size
-		case 4:
-			return r.fingerprint
 		}
-	} else {
-		switch column {
-		case 0:
-			return r.comment
-		case 1:
-			return r.algorithm
-		case 2:
-			return r.size
-		case 3:
-			return r.fingerprint
-		}
+		column--
+	}
+	switch column {
+	case 0:
+		return r.comment
+	case 1:
+		return r.algorithm
+	case 2:
+		return r.size
+	case 3:
+		return r.fingerprint
 	}
 	return ""
 }
 
-// CopyText returns the four displayed identity fields as tab-separated clipboard text.
-func (r *Row) CopyText() string {
+// copyText returns the four displayed identity fields as tab-separated clipboard text.
+func (r *Row) copyText() string {
 	return strings.Join([]string{r.comment, r.algorithm, r.size, r.fingerprint}, "\t")
 }
 

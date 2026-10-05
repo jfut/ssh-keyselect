@@ -23,14 +23,6 @@ const (
 	Failure           byte = 5
 	Success           byte = 6
 
-	AddIdentity       byte = 17
-	RemoveIdentity    byte = 18
-	RemoveAllIdentity byte = 19
-	AddSmartcard      byte = 20
-	RemoveSmartcard   byte = 21
-	Lock              byte = 22
-	Unlock            byte = 23
-
 	SessionBindExtension = "session-bind@openssh.com"
 
 	// maxMessageSize bounds allocations made from client-controlled packet lengths.
@@ -103,25 +95,29 @@ func ParseIdentities(message []byte) ([]identity.Identity, error) {
 
 // MarshalIdentities creates an IDENTITIES_ANSWER payload.
 func MarshalIdentities(identities []identity.Identity) ([]byte, error) {
-	if uint64(len(identities)) > uint64(maxMessageSize/8) {
+	if len(identities) > (maxMessageSize-5)/8 {
 		return nil, errMalformed
 	}
-	message := make([]byte, 5, 5+len(identities)*64)
+	// Check the complete size before allocating and encode directly into one buffer.
+	size := 5
+	for _, id := range identities {
+		if len(id.Blob) > maxMessageSize-size-8 {
+			return nil, errMalformed
+		}
+		size += 8 + len(id.Blob)
+		if len(id.Comment) > maxMessageSize-size {
+			return nil, errMalformed
+		}
+		size += len(id.Comment)
+	}
+	message := make([]byte, 5, size)
 	message[0] = IdentitiesAnswer
 	binary.BigEndian.PutUint32(message[1:5], uint32(len(identities)))
 	for _, id := range identities {
-		var err error
-		message, err = appendSSHString(message, id.Blob)
-		if err != nil {
-			return nil, err
-		}
-		message, err = appendSSHString(message, []byte(id.Comment))
-		if err != nil {
-			return nil, err
-		}
-	}
-	if len(message) > maxMessageSize {
-		return nil, errMalformed
+		message = binary.BigEndian.AppendUint32(message, uint32(len(id.Blob)))
+		message = append(message, id.Blob...)
+		message = binary.BigEndian.AppendUint32(message, uint32(len(id.Comment)))
+		message = append(message, id.Comment...)
 	}
 	return message, nil
 }
@@ -144,32 +140,13 @@ func ParseSignRequest(message []byte) (keyBlob, data []byte, flags uint32, err e
 	return keyBlob, data, flags, nil
 }
 
-// MarshalSignRequest creates a SIGN_REQUEST payload.
-func MarshalSignRequest(keyBlob, data []byte, flags uint32) ([]byte, error) {
-	message := []byte{SignRequest}
-	var err error
-	if message, err = appendSSHString(message, keyBlob); err != nil {
-		return nil, err
-	}
-	if message, err = appendSSHString(message, data); err != nil {
-		return nil, err
-	}
-	var encodedFlags [4]byte
-	binary.BigEndian.PutUint32(encodedFlags[:], flags)
-	message = append(message, encodedFlags[:]...)
-	if len(message) > maxMessageSize {
-		return nil, errMalformed
-	}
-	return message, nil
-}
-
 // AgentExtension contains the name and payload of an SSH agent extension request.
 type AgentExtension struct {
 	Name    string
 	Payload []byte
 }
 
-// ParseExtensionRequest decodes the extension name and leaves its payload opaque.
+// ParseExtensionRequest decodes the extension name and returns a view of its opaque payload.
 func ParseExtensionRequest(message []byte) (AgentExtension, error) {
 	if len(message) < 1 || message[0] != ExtensionRequest {
 		return AgentExtension{}, errMalformed
@@ -179,7 +156,7 @@ func ParseExtensionRequest(message []byte) (AgentExtension, error) {
 	if err != nil || len(name) == 0 {
 		return AgentExtension{}, errMalformed
 	}
-	return AgentExtension{Name: string(name), Payload: append([]byte(nil), reader.data...)}, nil
+	return AgentExtension{Name: string(name), Payload: reader.data}, nil
 }
 
 // SessionBindRequest contains the host identity bound to one SSH session.
@@ -211,16 +188,6 @@ func ParseSessionBindRequest(payload []byte) (SessionBindRequest, error) {
 		Signature:    signature,
 		IsForwarding: reader.data[0] == 1,
 	}, nil
-}
-
-func appendSSHString(dst, value []byte) ([]byte, error) {
-	if uint64(len(value)) > uint64(maxMessageSize) || len(dst)+4+len(value) > maxMessageSize {
-		return nil, errMalformed
-	}
-	var length [4]byte
-	binary.BigEndian.PutUint32(length[:], uint32(len(value)))
-	dst = append(dst, length[:]...)
-	return append(dst, value...), nil
 }
 
 type messageReader struct {

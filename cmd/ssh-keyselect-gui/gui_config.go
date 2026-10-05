@@ -479,11 +479,11 @@ func editGUIEndpointSettings(cfg config.Config) (config.Config, bool, error) {
 	}
 	upstreamModeValue, ok := upstreamMode.Selected()
 	if !ok {
-		return config.Config{}, false, guiErrNoTransportMode
+		return config.Config{}, false, errGUINoTransportMode
 	}
 	listenModeValue, ok := listenMode.Selected()
 	if !ok {
-		return config.Config{}, false, guiErrNoTransportMode
+		return config.Config{}, false, errGUINoTransportMode
 	}
 	upstreamEndpoint := ""
 	if cfg.Agent.Upstream != "" && upstreamPath.Text() == guiDisplayEndpointPath(cfg.Agent.Upstream) &&
@@ -650,4 +650,4 @@ func addGUIConfigRow(panel *unison.Panel, title string, control unison.Paneler) 
 	panel.AddChild(control)
 }
 
-var guiErrNoTransportMode = errors.New("transport mode is not selected")
+var errGUINoTransportMode = errors.New("transport mode is not selected")

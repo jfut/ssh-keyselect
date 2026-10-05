@@ -15,7 +15,7 @@ type terminalSession struct {
 	width  int
 	// echoInput prints a completed line when the inherited stream has no live echo.
 	echoInput bool
-	// liveEcho lets the input reader echo printable bytes and erase keys itself.
+	// liveEcho enables the key-by-key picker when the terminal provides raw input.
 	liveEcho bool
 	close    func() error
 	// closeOnce is only used by Close in this file.

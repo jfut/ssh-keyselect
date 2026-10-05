@@ -7,11 +7,9 @@ package listener
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	"github.com/jfut/ssh-keyselect/internal/transport"
 )
@@ -59,13 +57,4 @@ func ResolveMode(_ string, _ string, requested transport.Mode) (transport.Mode, 
 		return "", fmt.Errorf("listen mode %q is supported only on Windows", mode)
 	}
 	return mode, nil
-}
-
-// ProbeWithMode checks whether a Unix agent socket is accepting connections.
-func ProbeWithMode(path string, _ transport.Mode) error {
-	conn, err := net.DialTimeout("unix", path, 250*time.Millisecond)
-	if err != nil {
-		return err
-	}
-	return conn.Close()
 }

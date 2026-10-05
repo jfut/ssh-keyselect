@@ -203,7 +203,7 @@ func TestOpenSSHMaxAuthTries(t *testing.T) {
 
 type commentSelector struct{ comment string }
 
-func (s commentSelector) Select(_ context.Context, identities []identity.Identity) ([]identity.Identity, error) {
+func (s commentSelector) Select(_ context.Context, identities []identity.Identity, _ selector.SelectionContext) ([]identity.Identity, error) {
 	for _, id := range identities {
 		if id.Comment == s.comment {
 			return []identity.Identity{id}, nil

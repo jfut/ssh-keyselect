@@ -9,7 +9,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"time"
 
 	"github.com/jfut/ssh-keyselect/internal/transport"
 )
@@ -19,7 +18,7 @@ func dialEndpoint(ctx context.Context, path string, requestedMode transport.Mode
 	if err != nil {
 		return nil, err
 	}
-	return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "unix", path)
+	return (&net.Dialer{Timeout: RequestTimeout}).DialContext(ctx, "unix", path)
 }
 
 // ResolveMode reports the endpoint transport that an agent connection will use.
@@ -29,9 +28,7 @@ func ResolveMode(_ string, requestedMode transport.Mode) (transport.Mode, error)
 		return "", err
 	}
 	switch mode {
-	case transport.Auto, transport.Unix:
-		return transport.Unix, nil
-	case transport.WSL1:
+	case transport.Auto, transport.Unix, transport.WSL1:
 		return transport.Unix, nil
 	default:
 		return "", fmt.Errorf("upstream mode %q is supported only on Windows", mode)

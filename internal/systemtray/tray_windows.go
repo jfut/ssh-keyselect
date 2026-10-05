@@ -213,7 +213,7 @@ func Start(callbacks Callbacks, endpoint string) (func() error, func(string) err
 			ID:     started.slot,
 			Flags:  nifTip,
 		}
-		setTrayTooltip(&data, trayTooltip(endpoint))
+		setTrayTooltip(&data, branding.EndpointTitle(endpoint))
 		return notifyTrayIcon(nimModify, &data)
 	}
 	return cleanup, updateTooltip, nil
@@ -329,7 +329,7 @@ func runTray(ready chan<- startResult, done chan<- error, callbacks Callbacks, e
 		CallbackMessage: wmTrayCallback,
 		Icon:            icon,
 	}
-	setTrayTooltip(&data, trayTooltip(endpoint))
+	setTrayTooltip(&data, branding.EndpointTitle(endpoint))
 	if err := notifyTrayIcon(nimAdd, &data); err != nil {
 		_, _, _ = destroyWindow.Call(window)
 		_, _, _ = unregisterClassW.Call(uintptr(unsafe.Pointer(trayWindowClass)), uintptr(instance))
@@ -417,7 +417,7 @@ func createTrayAppIcon(iconPNG []byte) (windows.Handle, error) {
 			Compression: biRGB,
 		},
 	}
-	var bits uintptr
+	var bits unsafe.Pointer
 	colorBitmap, _, callErr := createDIBSection.Call(
 		0,
 		uintptr(unsafe.Pointer(&info)),
@@ -427,12 +427,12 @@ func createTrayAppIcon(iconPNG []byte) (windows.Handle, error) {
 		0,
 	)
 	runtime.KeepAlive(info)
-	if colorBitmap == 0 || bits == 0 {
+	if colorBitmap == 0 || bits == nil {
 		return 0, winCallError("create tray icon bitmap", callErr)
 	}
 	defer func() { _, _, _ = deleteObject.Call(colorBitmap) }()
 
-	pixels := unsafe.Slice((*byte)(unsafe.Pointer(bits)), trayIconSize*trayIconSize*4)
+	pixels := unsafe.Slice((*byte)(bits), trayIconSize*trayIconSize*4)
 	bounds := decoded.Bounds()
 	for y := range trayIconSize {
 		for x := range trayIconSize {

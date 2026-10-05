@@ -16,3 +16,11 @@ const (
 	// Author is shown in the About dialog.
 	Author = "Jun Futagawa (jfut)"
 )
+
+// EndpointTitle keeps the main window and tray labels consistent when settings change.
+func EndpointTitle(endpoint string) string {
+	if endpoint == "" {
+		return Name
+	}
+	return endpoint + " - " + Name
+}

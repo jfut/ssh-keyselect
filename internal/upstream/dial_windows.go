@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"time"
 
 	"github.com/Microsoft/go-winio"
 	"github.com/jfut/ssh-keyselect/internal/transport"
@@ -19,7 +18,7 @@ import (
 )
 
 func dialEndpoint(ctx context.Context, path string, requestedMode transport.Mode) (net.Conn, error) {
-	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	dialCtx, cancel := context.WithTimeout(ctx, RequestTimeout)
 	defer cancel()
 	mode, err := ResolveMode(path, requestedMode)
 	if err != nil {
@@ -32,13 +31,12 @@ func dialEndpoint(ctx context.Context, path string, requestedMode transport.Mode
 		}
 		return winio.DialPipeContext(dialCtx, path)
 	case transport.Cygwin:
-		return winsocket.Dial(dialCtx, path, mode)
+		return winsocket.Dial(dialCtx, path)
 	case transport.Unix, transport.WSL1:
 		return dialWindowsUnixSocket(dialCtx, path)
 	default:
 		return nil, fmt.Errorf("unsupported Windows upstream mode %q", mode)
 	}
-
 }
 
 // ResolveMode reports the endpoint transport that an agent connection will use.

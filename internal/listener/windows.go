@@ -39,10 +39,10 @@ func ListenWithMode(path string, requested transport.Mode) (net.Listener, func()
 		if winpath.IsNamedPipe(path) {
 			return nil, nil, errors.New("socket-file listen mode requires a filesystem path")
 		}
-		return winsocket.Listen(path, mode)
+		return winsocket.Listen(path)
 	case transport.Unix, transport.WSL1:
 		if winpath.IsNamedPipe(path) {
-			return nil, nil, errors.New("Unix-socket listen mode requires a filesystem path")
+			return nil, nil, errors.New("unix-socket listen mode requires a filesystem path")
 		}
 		return listenUnixSocket(path)
 	case transport.NamedPipe:

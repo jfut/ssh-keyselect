@@ -10,16 +10,21 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/jfut/ssh-keyselect/internal/identity"
 	"github.com/jfut/ssh-keyselect/internal/protocol"
 	"github.com/jfut/ssh-keyselect/internal/transport"
 )
 
+// RequestTimeout bounds connection setup and non-interactive requests, excluding picker and signing approval waits.
+const RequestTimeout = 10 * time.Second
+
 // Agent is the subset of SSH agent operations used by the proxy.
 type Agent interface {
 	List(context.Context) ([]identity.Identity, error)
 	RoundTrip(context.Context, []byte) ([]byte, error)
+	OpenSession(context.Context) (AgentSession, error)
 }
 
 // AgentSession keeps agent requests and their session bindings on one connection.
@@ -28,11 +33,6 @@ type AgentSession interface {
 	List(context.Context) ([]identity.Identity, error)
 	RoundTrip(context.Context, []byte) ([]byte, error)
 	Close() error
-}
-
-// SessionAgent opens a connection that retains OpenSSH session bindings.
-type SessionAgent interface {
-	OpenSession(context.Context) (AgentSession, error)
 }
 
 // EndpointAgent connects to a local agent endpoint.
@@ -79,7 +79,16 @@ func (s *agentEndpointSession) List(ctx context.Context) ([]identity.Identity, e
 }
 
 func (s *agentEndpointSession) RoundTrip(ctx context.Context, request []byte) ([]byte, error) {
-	return agentRoundTrip(ctx, s.conn, request, s.Close)
+	stop := context.AfterFunc(ctx, func() { _ = s.Close() })
+	defer stop()
+	if err := protocol.WriteFrame(s.conn, request); err != nil {
+		return nil, fmt.Errorf("write upstream agent request: %w", err)
+	}
+	response, err := protocol.ReadFrame(s.conn)
+	if err != nil {
+		return nil, fmt.Errorf("read upstream agent response: %w", err)
+	}
+	return response, nil
 }
 
 func (s *agentEndpointSession) Close() error {
@@ -89,6 +98,8 @@ func (s *agentEndpointSession) Close() error {
 
 // List requests the upstream public identities.
 func (a EndpointAgent) List(ctx context.Context) ([]identity.Identity, error) {
+	ctx, cancel := context.WithTimeout(ctx, RequestTimeout)
+	defer cancel()
 	response, err := a.RoundTrip(ctx, []byte{protocol.RequestIdentities})
 	if err != nil {
 		return nil, err
@@ -98,27 +109,11 @@ func (a EndpointAgent) List(ctx context.Context) ([]identity.Identity, error) {
 
 // RoundTrip forwards a single raw SSH agent payload and returns the upstream payload.
 func (a EndpointAgent) RoundTrip(ctx context.Context, request []byte) ([]byte, error) {
-	if a.Path == "" {
-		return nil, errors.New("upstream endpoint is empty")
-	}
-	conn, err := dialEndpoint(ctx, a.Path, a.Mode)
+	session, err := a.OpenSession(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("connect to upstream agent: %w", err)
+		return nil, err
 	}
-	defer func() { _ = conn.Close() }()
-	return agentRoundTrip(ctx, conn, request, conn.Close)
-}
-
-// agentRoundTrip shares framing and cancellation behavior between one-shot and bound agent connections.
-func agentRoundTrip(ctx context.Context, conn net.Conn, request []byte, closeConn func() error) ([]byte, error) {
-	stop := context.AfterFunc(ctx, func() { _ = closeConn() })
-	defer stop()
-	if err := protocol.WriteFrame(conn, request); err != nil {
-		return nil, fmt.Errorf("write upstream agent request: %w", err)
-	}
-	response, err := protocol.ReadFrame(conn)
-	if err != nil {
-		return nil, fmt.Errorf("read upstream agent response: %w", err)
-	}
-	return response, nil
+	defer func() { _ = session.Close() }()
+	// Signing can require user confirmation or a hardware-key touch; the caller controls cancellation.
+	return session.RoundTrip(ctx, request)
 }

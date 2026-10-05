@@ -6,6 +6,7 @@ package selector
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestReadInputLineAcceptsCRLFAndLF(t *testing.T) {
 		{line: "2", skipLF: true},
 		{line: "3"},
 	} {
-		line, skipNextLF, err := tuiReadInputLineWithEcho(reader, skipLF, nil)
+		line, skipNextLF, err := tuiReadInputLine(reader, skipLF)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -47,21 +48,21 @@ func TestReadInputLineAcceptsCRLFAndLF(t *testing.T) {
 
 func TestReadInputLineErasesWithBackspaceAndDelete(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader("12\b\r\n345\x7f\x7f6\n"))
-	line, skipLF, err := tuiReadInputLineWithEcho(reader, false, nil)
+	line, skipLF, err := tuiReadInputLine(reader, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if line != "1" || !skipLF {
 		t.Fatalf("backspace result = %q, skipLF %t; want %q, skipLF true", line, skipLF, "1")
 	}
-	line, skipLF, err = tuiReadInputLineWithEcho(reader, skipLF, nil)
+	line, skipLF, err = tuiReadInputLine(reader, skipLF)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if line != "36" || skipLF {
 		t.Fatalf("delete result = %q, skipLF %t; want %q, skipLF false", line, skipLF, "36")
 	}
-	line, _, err = tuiReadInputLineWithEcho(bufio.NewReader(strings.NewReader("1あ\x7f\n")), false, nil)
+	line, _, err = tuiReadInputLine(bufio.NewReader(strings.NewReader("1あ\x7f\n")), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,21 +71,35 @@ func TestReadInputLineErasesWithBackspaceAndDelete(t *testing.T) {
 	}
 }
 
-func TestReadInputLineWithEchoErasesVisuallyAndReturnsControlC(t *testing.T) {
-	var output bytes.Buffer
-	line, skipLF, err := tuiReadInputLineWithEcho(bufio.NewReader(strings.NewReader("1\b2\b\x03")), false, &output)
+func TestReadInputLineReturnsControlKeysImmediately(t *testing.T) {
+	line, skipLF, err := tuiReadInputLine(bufio.NewReader(strings.NewReader("1\b2\b\x03")), false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if line != "\x03" || skipLF {
 		t.Fatalf("interrupted input = %q, skipLF %t; want Ctrl+C and skipLF false", line, skipLF)
 	}
-	if got, want := output.String(), "1\b \b2\b \b^C\r\n"; got != want {
-		t.Fatalf("live input echo = %q, want %q", got, want)
-	}
-	line, skipLF, err = tuiReadInputLineWithEcho(bufio.NewReader(strings.NewReader("\x1b")), false, nil)
+	line, skipLF, err = tuiReadInputLine(bufio.NewReader(strings.NewReader("\x1b")), false)
 	if err != nil || line != "\x1b" || skipLF {
 		t.Fatalf("Escape input = %q, skipLF %t, error %v; want immediate cancellation", line, skipLF, err)
+	}
+}
+
+func TestBufferedSelectionDoesNotTreatCRLFSuffixAsConfirmation(t *testing.T) {
+	identities := []identity.Identity{{Comment: "alpha"}, {Comment: "beta"}}
+	input := strings.NewReader("alpha\r\nbeta\r\n\r\nSSH input")
+	var output bytes.Buffer
+	terminal := &terminalSession{reader: input, writer: &output, width: 100, echoInput: true}
+	chosen, err := (&TUISelector{}).selectLineBuffered(context.Background(), terminal,
+		makeSearchableIdentityOptions(identities), SelectionContext{}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chosen) != 1 || chosen[0].Comment != "beta" {
+		t.Fatalf("selection = %+v, want beta after the explicit confirmation", chosen)
+	}
+	if input.Len() != len("\nSSH input") {
+		t.Fatal("picker read ahead into the SSH process's input")
 	}
 }
 

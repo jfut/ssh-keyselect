@@ -55,10 +55,7 @@ func TestProxyTransportFiltersIdentitiesAndForwardsSelectedSign(t *testing.T) {
 	if len(selected) != 1 || selected[0].Comment != "third" {
 		t.Fatalf("frontend identities = %+v, want third only", selected)
 	}
-	signRequest, err := protocol.MarshalSignRequest(upstreamIdentities[2].Blob, []byte("challenge"), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	signRequest := testSignRequest(upstreamIdentities[2].Blob, []byte("challenge"), 0)
 	response := request(t, client, signRequest)
 	if len(response) != 8 || response[0] != protocol.SignResponse {
 		t.Fatalf("forwarded sign response = %x", response)

@@ -17,7 +17,7 @@ import (
 
 func TestListenProtectsAndRemovesSocket(t *testing.T) {
 	path := filepath.Join(shortSocketTestDir(t), "nested", "agent.sock")
-	ln, cleanup, err := ListenWithMode(path, transport.Unix)
+	_, cleanup, err := ListenWithMode(path, transport.Unix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,24 +35,44 @@ func TestListenProtectsAndRemovesSocket(t *testing.T) {
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("socket remains after cleanup: %v", err)
 	}
-	_ = ln
 }
 
 func TestListenRemovesStaleSocket(t *testing.T) {
 	path := filepath.Join(shortSocketTestDir(t), "agent.sock")
-	stale, err := net.Listen("unix", path)
+	stale, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	stale.SetUnlinkOnClose(false)
 	if err := stale.Close(); err != nil {
 		t.Fatal(err)
 	}
-	ln, cleanup, err := ListenWithMode(path, transport.Unix)
+	_, cleanup, err := ListenWithMode(path, transport.Unix)
 	if err != nil {
 		t.Fatalf("Listen did not replace stale socket: %v", err)
 	}
 	defer cleanup()
-	_ = ln
+}
+
+func TestCleanupPreservesReplacementAtListenPath(t *testing.T) {
+	path := filepath.Join(shortSocketTestDir(t), "agent.sock")
+	_, cleanup, err := ListenWithMode(path, transport.Unix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cleanup)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	const replacement = "another owner's file"
+	if err := os.WriteFile(path, []byte(replacement), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
+	contents, err := os.ReadFile(path)
+	if err != nil || string(contents) != replacement {
+		t.Fatalf("cleanup removed or changed the replacement file: %q, %v", contents, err)
+	}
 }
 
 // Short directory names keep Unix socket paths below platform limits.

@@ -10,7 +10,6 @@ import (
 	"io"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -23,23 +22,14 @@ type TUISelector struct {
 	TTYPath   string
 	queue     chan struct{}
 	queueOnce sync.Once
-	selecting atomic.Bool
 }
 
 func NewTUISelector() *TUISelector {
 	return &TUISelector{TTYPath: "/dev/tty"}
 }
 
-// IsSelecting reports whether the TUI currently owns the terminal for a prompt.
-func (s *TUISelector) IsSelecting() bool { return s.selecting.Load() }
-
-// Select displays a searchable identity table and returns the highlighted match on Enter.
-func (s *TUISelector) Select(ctx context.Context, identities []identity.Identity) ([]identity.Identity, error) {
-	return s.SelectWithContext(ctx, identities, SelectionContext{})
-}
-
-// SelectWithContext displays verified host information and the key picker.
-func (s *TUISelector) SelectWithContext(ctx context.Context, identities []identity.Identity, requestContext SelectionContext) ([]identity.Identity, error) {
+// Select displays verified host information and returns the highlighted identity on Enter.
+func (s *TUISelector) Select(ctx context.Context, identities []identity.Identity, requestContext SelectionContext) ([]identity.Identity, error) {
 	if len(identities) == 0 {
 		return nil, nil
 	}
@@ -50,9 +40,6 @@ func (s *TUISelector) SelectWithContext(ctx context.Context, identities []identi
 		return nil, ctx.Err()
 	}
 	defer func() { <-s.queue }()
-	s.selecting.Store(true)
-	defer s.selecting.Store(false)
-
 	path := s.TTYPath
 	if path == "" {
 		path = "/dev/tty"
@@ -79,8 +66,9 @@ func tuiEchoInputLine(writer io.Writer, line string) error {
 }
 
 type tuiInputLine struct {
-	line string
-	err  error
+	line   string
+	skipLF bool
+	err    error
 }
 
 type tuiByteReader interface {
@@ -214,9 +202,6 @@ func (s *TUISelector) selectLive(ctx context.Context, terminal *terminalSession,
 					continue
 				}
 				r, size := utf8.DecodeRune(pendingUTF8)
-				if r == utf8.RuneError && size == 1 {
-					r = utf8.RuneError
-				}
 				query += string(r)
 				pendingUTF8 = pendingUTF8[size:]
 			} else if value >= 0x20 {
@@ -269,6 +254,7 @@ func tuiReadEscapeKey(ctx context.Context, reader tuiByteReader) (byte, bool, er
 
 func (s *TUISelector) selectLineBuffered(ctx context.Context, terminal *terminalSession, options []identityOption, requestContext SelectionContext, shownAt time.Time) ([]identity.Identity, error) {
 	query := ""
+	skipLF := false
 	matches := matchIdentities(options, query)
 	for {
 		frame := tuiRenderSelectionFrame(options, matches, query, 0, terminal.width, requestContext, shownAt)
@@ -277,13 +263,14 @@ func (s *TUISelector) selectLineBuffered(ctx context.Context, terminal *terminal
 		}
 		lineCh := make(chan tuiInputLine, 1)
 		go func() {
-			line, _, err := tuiReadInputLineWithEcho(tuiSingleByteReader{reader: terminal.reader}, false, nil)
-			lineCh <- tuiInputLine{line: line, err: err}
+			line, skipNextLF, err := tuiReadInputLine(tuiSingleByteReader{reader: terminal.reader}, skipLF)
+			lineCh <- tuiInputLine{line: line, skipLF: skipNextLF, err: err}
 		}()
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case result := <-lineCh:
+			skipLF = result.skipLF
 			if result.err != nil && ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
@@ -316,8 +303,9 @@ func (s *TUISelector) selectLineBuffered(ctx context.Context, terminal *terminal
 	}
 }
 
-// tuiReadInputLineWithEcho edits input bytes and mirrors the edit operations for raw console input.
-func tuiReadInputLineWithEcho(reader tuiByteReader, skipLF bool, echo io.Writer) (string, bool, error) {
+// tuiReadInputLine edits buffered input without reading ahead into the SSH process's input.
+// Consume a pending CRLF suffix only when the picker needs another line.
+func tuiReadInputLine(reader tuiByteReader, skipLF bool) (string, bool, error) {
 	var first byte
 	hasFirst := false
 	if skipLF {
@@ -345,19 +333,10 @@ func tuiReadInputLineWithEcho(reader tuiByteReader, skipLF bool, echo io.Writer)
 		}
 		switch value {
 		case '\r':
-			if err := tuiWriteInputEcho(echo, "\r\n"); err != nil {
-				return string(line), false, err
-			}
 			return string(line), true, nil
 		case '\n':
-			if err := tuiWriteInputEcho(echo, "\r\n"); err != nil {
-				return string(line), false, err
-			}
 			return string(line), false, nil
 		case '\x03':
-			if err := tuiWriteInputEcho(echo, "^C\r\n"); err != nil {
-				return string(line), false, err
-			}
 			return string(value), false, nil
 		case '\x1b':
 			return string(value), false, nil
@@ -365,27 +344,11 @@ func tuiReadInputLineWithEcho(reader tuiByteReader, skipLF bool, echo io.Writer)
 			if len(line) != 0 {
 				_, size := utf8.DecodeLastRune(line)
 				line = line[:len(line)-size]
-				if err := tuiWriteInputEcho(echo, "\b \b"); err != nil {
-					return string(line), false, err
-				}
 			}
 		default:
 			line = append(line, value)
-			if value >= 0x20 && value != 0x7f {
-				if err := tuiWriteInputEcho(echo, string([]byte{value})); err != nil {
-					return string(line), false, err
-				}
-			}
 		}
 	}
-}
-
-func tuiWriteInputEcho(writer io.Writer, value string) error {
-	if writer == nil {
-		return nil
-	}
-	_, err := io.WriteString(writer, value)
-	return err
 }
 
 func tuiRenderSelectionFrame(options []identityOption, matches []identityMatch, query string, selected, terminalWidth int, requestContext SelectionContext, shownAt time.Time) string {

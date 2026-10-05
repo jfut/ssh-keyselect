@@ -34,6 +34,8 @@ func TestSSHRejectsWindowsEndpointAliases(t *testing.T) {
 		{name: "Git Bash upstream", listen: endpoint, upstream: gitBashPath},
 		{name: "WSL1 listen", listen: "/mnt" + gitBashPath, upstream: endpoint},
 		{name: "WSL1 upstream", listen: endpoint, upstream: "/mnt" + gitBashPath},
+		{name: "Cygwin listen", listen: "/cygdrive" + gitBashPath, upstream: endpoint},
+		{name: "Cygwin upstream", listen: endpoint, upstream: "/cygdrive" + gitBashPath},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

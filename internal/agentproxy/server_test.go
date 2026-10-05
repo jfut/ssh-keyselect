@@ -21,6 +21,7 @@ import (
 	"github.com/jfut/ssh-keyselect/internal/protocol"
 	"github.com/jfut/ssh-keyselect/internal/selector"
 	"github.com/jfut/ssh-keyselect/internal/upstream"
+	"golang.org/x/crypto/ssh"
 )
 
 func TestOnlySelectedIdentityCanSign(t *testing.T) {
@@ -36,10 +37,7 @@ func TestOnlySelectedIdentityCanSign(t *testing.T) {
 		t.Fatalf("identities returned = %+v, want beta only", selected)
 	}
 
-	signRequest, err := protocol.MarshalSignRequest(ids[0].Blob, []byte("challenge"), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	signRequest := testSignRequest(ids[0].Blob, []byte("challenge"), 0)
 	if got := request(t, client, signRequest); len(got) != 1 || got[0] != protocol.Failure {
 		t.Fatalf("unselected sign response = %x, want SSH_AGENT_FAILURE", got)
 	}
@@ -47,10 +45,7 @@ func TestOnlySelectedIdentityCanSign(t *testing.T) {
 		t.Fatalf("unselected signing request reached upstream %d times", got)
 	}
 
-	signRequest, err = protocol.MarshalSignRequest(ids[1].Blob, []byte("challenge"), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	signRequest = testSignRequest(ids[1].Blob, []byte("challenge"), 0)
 	if got := request(t, client, signRequest); len(got) != 8 || got[0] != protocol.SignResponse {
 		t.Fatalf("selected sign response = %x, want SSH_AGENT_SIGN_RESPONSE", got)
 	}
@@ -79,10 +74,7 @@ func TestAutoSelectExposesAndAllowsEveryUpstreamIdentity(t *testing.T) {
 	}
 
 	for _, id := range ids {
-		signRequest, err := protocol.MarshalSignRequest(id.Blob, []byte("challenge"), 0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		signRequest := testSignRequest(id.Blob, []byte("challenge"), 0)
 		if response := request(t, client, signRequest); len(response) != 8 || response[0] != protocol.SignResponse {
 			t.Fatalf("auto-selected signing response = %x, want SSH_AGENT_SIGN_RESPONSE", response)
 		}
@@ -101,7 +93,7 @@ func TestManagementAndUnknownRequestsAreAlwaysRejected(t *testing.T) {
 		name    string
 		message []byte
 	}{
-		{name: "add identity", message: []byte{protocol.AddIdentity}},
+		{name: "add identity", message: []byte{17}},
 		{name: "unsupported extension", message: []byte{protocol.ExtensionRequest, 0, 0, 0, 3, 'x', 'y', 'z'}},
 		{name: "unknown", message: []byte{0xff}},
 	}
@@ -136,10 +128,18 @@ func TestSelectionIsCachedForTheConnection(t *testing.T) {
 	chooser := &selecting{index: 0}
 	_, client, cleanup := newPipeSession(t, agent, chooser)
 	defer cleanup()
+	var firstResponse []byte
 	for i := 0; i < 2; i++ {
 		response := request(t, client, []byte{protocol.RequestIdentities})
 		if _, err := protocol.ParseIdentities(response); err != nil {
 			t.Fatal(err)
+		}
+		if i == 0 {
+			firstResponse = response
+			// Upstream changes must not alter the keys or metadata already offered to this client.
+			agent.identities[0].Comment = "changed upstream comment"
+		} else if !bytes.Equal(response, firstResponse) {
+			t.Fatal("repeated identity request changed the cached selection")
 		}
 	}
 	if got := chooser.calls.Load(); got != 1 {
@@ -192,10 +192,7 @@ func TestBoundAgentSessionClosesForPickerAndReplaysForSigning(t *testing.T) {
 		t.Fatal("identity selection response did not arrive")
 	}
 
-	signRequest, err := protocol.MarshalSignRequest(ids[0].Blob, []byte("challenge"), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	signRequest := testSignRequest(ids[0].Blob, []byte("challenge"), 0)
 	if response := request(t, client, signRequest); len(response) != 8 || response[0] != protocol.SignResponse {
 		t.Fatalf("sign response after picker wait = %x, want SSH_AGENT_SIGN_RESPONSE", response)
 	}
@@ -237,10 +234,7 @@ func TestForwardingAfterAuthenticationStartsANewSelectionSession(t *testing.T) {
 		t.Fatalf("initial upstream identity-list bindings = %x, want the first forwarding and authentication bindings", got)
 	}
 
-	signRequest, err := protocol.MarshalSignRequest(agent.identities[0].Blob, []byte("first challenge"), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	signRequest := testSignRequest(agent.identities[0].Blob, []byte("first challenge"), 0)
 	if response := request(t, client, signRequest); len(response) != 8 || response[0] != protocol.SignResponse {
 		t.Fatalf("initial selected signing response = %x, want signature", response)
 	}
@@ -269,10 +263,7 @@ func TestForwardingAfterAuthenticationStartsANewSelectionSession(t *testing.T) {
 		t.Fatalf("second-hop upstream identity-list bindings = %x, want the second chain", got)
 	}
 
-	signRequest, err = protocol.MarshalSignRequest(agent.identities[0].Blob, []byte("second challenge"), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	signRequest = testSignRequest(agent.identities[0].Blob, []byte("second challenge"), 0)
 	if response := request(t, client, signRequest); len(response) != 8 || response[0] != protocol.SignResponse {
 		t.Fatalf("second-hop selected signing response = %x, want signature", response)
 	}
@@ -291,10 +282,7 @@ func TestConcurrentSessionsDoNotShareSelectedKeys(t *testing.T) {
 	_ = request(t, clientA, []byte{protocol.RequestIdentities})
 	_ = request(t, clientB, []byte{protocol.RequestIdentities})
 
-	signB, err := protocol.MarshalSignRequest(ids[1].Blob, []byte("challenge"), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	signB := testSignRequest(ids[1].Blob, []byte("challenge"), 0)
 	if response := request(t, clientA, signB); len(response) != 1 || response[0] != protocol.Failure {
 		t.Fatalf("session A sign response = %x, want failure", response)
 	}
@@ -403,7 +391,7 @@ func TestServeClosesExcessivePendingRequestsDuringPicker(t *testing.T) {
 				// Leave one slot for the abusive client to verify that it is reclaimed.
 				for range connectionLimit - 1 {
 					idle := dialProxyTestClient(t, endpoint)
-					_ = request(t, idle, []byte{protocol.RemoveAllIdentity})
+					_ = request(t, idle, []byte{19})
 				}
 			}
 			client := dialProxyTestClient(t, endpoint)
@@ -433,7 +421,7 @@ func TestServeClosesExcessivePendingRequestsDuringPicker(t *testing.T) {
 			deadline := time.Now().Add(5 * time.Second)
 			for time.Now().Before(deadline) {
 				fresh := dialProxyTestClient(t, endpoint)
-				err := protocol.WriteFrame(fresh, []byte{protocol.RemoveAllIdentity})
+				err := protocol.WriteFrame(fresh, []byte{19})
 				if err == nil {
 					var response []byte
 					response, err = protocol.ReadFrame(fresh)
@@ -495,7 +483,7 @@ func TestServeClosesIncompleteFramesWhilePickerIsWaiting(t *testing.T) {
 		t.Run(client.name, func(t *testing.T) { requireProxyClientClosed(t, client.conn) })
 	}
 	client := dialProxyTestClient(t, endpoint)
-	if response := request(t, client, []byte{protocol.RemoveAllIdentity}); !bytes.Equal(response, []byte{protocol.Failure}) {
+	if response := request(t, client, []byte{19}); !bytes.Equal(response, []byte{protocol.Failure}) {
 		t.Fatalf("response after read timeouts = %x, want SSH_AGENT_FAILURE", response)
 	}
 }
@@ -738,6 +726,16 @@ func request(t *testing.T, conn net.Conn, payload []byte) []byte {
 	return response
 }
 
+// Use an independent SSH encoder to exercise the proxy's request parser.
+func testSignRequest(keyBlob, data []byte, flags uint32) []byte {
+	return ssh.Marshal(struct {
+		Type    byte
+		KeyBlob []byte
+		Data    []byte
+		Flags   uint32
+	}{protocol.SignRequest, keyBlob, data, flags})
+}
+
 // selecting is shared with the platform integration tests to choose a fixed identity.
 type selecting struct {
 	index int
@@ -752,7 +750,7 @@ type blockingSelecting struct {
 	release chan struct{}
 }
 
-func (s *blockingSelecting) Select(ctx context.Context, identities []identity.Identity) ([]identity.Identity, error) {
+func (s *blockingSelecting) Select(ctx context.Context, identities []identity.Identity, _ selector.SelectionContext) ([]identity.Identity, error) {
 	close(s.started)
 	select {
 	case <-ctx.Done():
@@ -762,7 +760,7 @@ func (s *blockingSelecting) Select(ctx context.Context, identities []identity.Id
 	}
 }
 
-func (s *selecting) Select(_ context.Context, identities []identity.Identity) ([]identity.Identity, error) {
+func (s *selecting) Select(_ context.Context, identities []identity.Identity, _ selector.SelectionContext) ([]identity.Identity, error) {
 	s.calls.Add(1)
 	if s.err != nil {
 		return nil, s.err
@@ -777,16 +775,12 @@ type contextualSelecting struct {
 	calls atomic.Int32
 }
 
-func (s *contextualSelecting) Select(ctx context.Context, identities []identity.Identity) ([]identity.Identity, error) {
-	return (&selecting{index: s.index}).Select(ctx, identities)
-}
-
-func (s *contextualSelecting) SelectWithContext(ctx context.Context, identities []identity.Identity, requestContext selector.SelectionContext) ([]identity.Identity, error) {
+func (s *contextualSelecting) Select(_ context.Context, identities []identity.Identity, requestContext selector.SelectionContext) ([]identity.Identity, error) {
 	s.calls.Add(1)
 	s.mu.Lock()
 	s.ctx = requestContext
 	s.mu.Unlock()
-	return s.Select(ctx, identities)
+	return []identity.Identity{identities[s.index]}, nil
 }
 
 func (s *contextualSelecting) selectionContext() selector.SelectionContext {
@@ -805,7 +799,12 @@ type fakeAgent struct {
 }
 
 func (f *fakeAgent) List(context.Context) ([]identity.Identity, error) {
-	return cloneIdentities(f.identities), nil
+	identities := make([]identity.Identity, len(f.identities))
+	for i, id := range f.identities {
+		identities[i] = id
+		identities[i].Blob = bytes.Clone(id.Blob)
+	}
+	return identities, nil
 }
 
 func (f *fakeAgent) OpenSession(context.Context) (upstream.AgentSession, error) {

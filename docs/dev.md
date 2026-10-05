@@ -4,11 +4,11 @@
 
 ## Architecture
 
-- `cmd/ssh-keyselect` implements the CLI, terminal SSH wrapper, and companion GUI launcher.
+- `cmd/ssh-keyselect` implements the CLI and terminal SSH wrapper.
 - `cmd/ssh-keyselect-gui` implements GUI startup, endpoint configuration, status display, and the About dialog. It is built with the `gui` build tag and shipped beside the CLI executable.
 - `internal/protocol` encodes and parses SSH Agent Protocol messages. `internal/agentproxy` exposes the selected identity and forwards permitted signing requests to the upstream agent.
-- `internal/listener` and `internal/upstream` implement frontend and upstream transports. `internal/transport` provides their shared mode names.
-- `internal/selector` contains terminal and GUI identity pickers. `internal/guiidentitytable` shares key-row presentation and filtering between the status window and picker.
+- `internal/listener` and `internal/upstream` implement frontend and upstream transports. `internal/transport` provides their shared mode names and endpoint comparisons.
+- `internal/selector` contains terminal and GUI identity pickers. Its selection interface always receives a `SelectionContext`, including an empty context when no host key was verified. `internal/guiidentitytable` shares key-row presentation and copy actions between the status window and picker, while `internal/guistyle` shares typography, button styling, and read-only field behavior.
 - `internal/guiwindow` shares primary-display window placement between GUI surfaces.
 - `internal/config` reads and writes GUI TOML configuration. CLI `ssh`, `list`, and `test` commands resolve upstream defaults from flags and environment without loading that file.
 - `internal/credits` embeds the compact dependency list used by About. Full license texts are shipped in the root `CREDITS` file.
@@ -66,7 +66,7 @@ sequenceDiagram
         Note over Proxy,Agent: No upstream connection remains open while waiting
         Picker-->>Proxy: Selected identities, or cancel
     end
-    Proxy->>Proxy: Cache selected list and selected key digests for this binding chain
+    Proxy->>Proxy: Encode and cache the identity answer and selected key digests for this binding chain
     Proxy-->>SSH: IdentitiesAnswer with selected keys, or an empty list on cancel
 
     opt Client repeats RequestIdentities on this socket connection
@@ -109,7 +109,9 @@ sequenceDiagram
 
 OpenSSH records session bindings for the lifetime of an agent connection and rejects a later binding on a connection already bound for authentication ([OpenSSH agent protocol](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.agent)). The proxy replays the binding chain on each temporary upstream connection before sending that operation. This preserves the session context for OpenSSH-compatible agents while accommodating agents that close connections after a short idle period. Without session bindings, ordinary requests use the upstream agent directly.
 
-The selected key digests stay authorized until the binding chain changes or the listen-socket connection closes. Later signing requests for a selected key in the same chain do not open another picker; requests for unselected keys are rejected. The repeated `RequestIdentities` branch covers clients that query again on the same agent socket. OpenSSH's usual authentication flow fetches the list while preparing public-key authentication; it does not poll periodically while an SSH session is idle ([OpenSSH source](https://github.com/openssh/openssh-portable/blob/master/sshconnect2.c#L1543-L1571)).
+The proxy serializes each selected identity list once and retains that response alongside the authorized key digests until the binding chain changes or the listen-socket connection closes. Repeated identity requests reuse those bytes. Later signing requests for a selected key in the same chain do not open another picker; requests for unselected keys are rejected. The repeated `RequestIdentities` branch covers clients that query again on the same agent socket. OpenSSH's usual authentication flow fetches the list while preparing public-key authentication; it does not poll periodically while an SSH session is idle ([OpenSSH source](https://github.com/openssh/openssh-portable/blob/master/sshconnect2.c#L1543-L1571)).
+
+Every upstream agent implementation supports opening a session. Identity-list and binding operations have a 10-second deadline, including connection establishment and binding replay. Signing also bounds connection establishment and binding replay, but waits for the signature using the client connection's context so upstream confirmation dialogs and hardware-key touch prompts can remain open longer than 10 seconds. Client disconnection or cancellation closes the upstream connection and interrupts that wait. Time spent choosing a key is also excluded from upstream request deadlines.
 
 ### Display text sanitization
 
@@ -127,9 +129,15 @@ Clients should wait for each response before sending another request. The frame 
 
 Every reader exit cancels the connection context and closes the frontend socket to stop the picker and unblock response writes. Shutdown cancels pickers, closes frontend sockets, and waits for handlers and readers even when the listener fails.
 
+Unix listener cleanup unlinks only the socket it created, after checking filesystem identity. Automatic unlinking on listener close is disabled so a replacement at the same path remains untouched.
+
 ### Windows endpoint implementation
 
 The `cygwin` transport reads the socket file's endpoint information and connects through loopback TCP using the file's GUID handshake. The `wsl1` transport uses Windows AF_UNIX sockets with paths translated from `/mnt/<drive>/...`. The `named-pipe` mode uses Windows OpenSSH named pipes. Native Windows and shell-specific defaults are implemented in platform-suffixed files under `internal/listener`, `internal/upstream`, `internal/winpath`, and `cmd/ssh-keyselect-gui`.
+
+Cygwin socket metadata reads are capped at 256 bytes. Dial cancellation interrupts the handshake, and listener shutdown closes connections whose handshakes are still pending so that shutdown does not wait for the handshake deadline.
+
+The CLI and GUI use the same endpoint comparison before binding. On Windows, native paths, Git Bash drive mounts, Cygwin `/cygdrive/` paths, and WSL1 drive mounts resolve through `internal/winpath`; named-pipe names and native paths compare without case sensitivity.
 
 The GUI stores and displays paths in platform-specific formats. On Windows, dialog paths are converted to or from the selected transport when opening or saving configuration. A Listen mode change closes and reopens the listener, attempting to restore the previous listener if rebinding fails.
 
@@ -150,6 +158,8 @@ A user-reported Windows check of a `just snapshot` build, with the main window v
 ### GUI assets
 
 `assets/ssh-keyselect-logo.png` is the source artwork. `just gen-platform-icons` creates the multi-size ICO, Linux desktop PNGs, and macOS ICNS under the ignored `assets/gui/generated/` directory. `just gen-windows-icons` also generates ignored Windows `.syso` resources under `assets/gui/generated/windows/`.
+
+Source artwork is decoded lazily once. The GUI also shares decoded title-bar images across windows, avoiding repeated scaling, encoding, and decoding when dialogs and pickers open.
 
 Each Windows executable combines its icon and version information in one resource object because the Go linker accepts only one resource section per executable. `assets/gui/windows-cli-resources.json` and `assets/gui/windows-gui-resources.json` define the shared `SSH KeySelect` file description and product name, the project copyright notice, and each executable's original filename. Windows version resources use `go-winres`, pinned in `scripts/generate-windows-icons.sh` and `scripts/generate-windows-resource.sh`. GoReleaser's per-target hooks use the latter script to override both executables' file and product versions with `.Version`, then remove the temporary resource after each build. Local builds use `0.0.0.0`. The GUI's resource description also supplies its `SSH KeySelect` name in Task Manager.
 

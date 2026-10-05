@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the ssh-keyselect project.
 
-package main
+package transport
 
 import (
 	"path/filepath"
@@ -12,8 +12,8 @@ import (
 	"github.com/jfut/ssh-keyselect/internal/winpath"
 )
 
-// sameEndpoint compares pipe names and native paths, including Git Bash and WSL1 aliases.
-func sameEndpoint(first, second string) bool {
+// SameEndpoint compares pipe names and native paths, including shell path aliases.
+func SameEndpoint(first, second string) bool {
 	if first == "" || second == "" {
 		return false
 	}

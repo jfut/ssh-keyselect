@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the ssh-keyselect project.
 
-package main
+package transport
 
 import "path/filepath"
 
-// sameEndpoint detects equivalent paths even when the socket does not exist yet.
-func sameEndpoint(first, second string) bool {
+// SameEndpoint compares socket paths before binding, even when they do not exist yet.
+func SameEndpoint(first, second string) bool {
 	if first == "" || second == "" {
 		return false
 	}

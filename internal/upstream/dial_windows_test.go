@@ -42,7 +42,7 @@ func TestDialEndpointConnectsToGitBashSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	select {
 	case acceptedConn := <-accepted:
 		_ = acceptedConn.Close()

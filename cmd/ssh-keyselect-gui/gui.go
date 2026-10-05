@@ -12,11 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"runtime"
-	"strings"
 	"syscall"
-	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/jfut/ssh-keyselect/assets/gui"
@@ -35,12 +31,11 @@ import (
 	"github.com/richardwilkes/toolbox/v2/geom"
 	"github.com/richardwilkes/unison"
 	"github.com/richardwilkes/unison/enums/align"
-	"github.com/richardwilkes/unison/enums/mod"
 	"github.com/richardwilkes/unison/enums/paintstyle"
 )
 
-// commandName is the CLI command shown in GUI startup errors.
-const guiCommandName = "ssh-keyselect"
+// guiCommandName identifies the executable in help and startup errors.
+const guiCommandName = "ssh-keyselect-gui"
 
 type guiOptions struct {
 	Config       *string          `help:"TOML configuration file." placeholder:"FILE"`
@@ -56,7 +51,7 @@ type guiOptions struct {
 func executeGUI(args []string, stdout, stderr io.Writer) int {
 	var options guiOptions
 	parser, err := kong.New(&options,
-		kong.Name("ssh-keyselect-gui"),
+		kong.Name(guiCommandName),
 		kong.Description("Start the SSH agent proxy and identity picker."),
 		kong.Vars{"version": fmt.Sprintf("ssh-keyselect-gui %s (%s)", version, commit)},
 		kong.Writers(stdout, stderr),
@@ -161,31 +156,12 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func guiEndpointTitle(endpoint string) string {
-	if endpoint == "" {
-		return branding.Name
-	}
-	return endpoint + " - " + branding.Name
-}
-
 func guiMainWindowTitle(endpoint string, dirty bool, statusSuffix string) string {
-	title := guiEndpointTitle(endpoint)
+	title := branding.EndpointTitle(endpoint)
 	if dirty {
 		title += " *"
 	}
 	return title + statusSuffix
-}
-
-func guiSamePath(first, second string) bool {
-	if first == "" || second == "" {
-		return false
-	}
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(filepath.Clean(first), filepath.Clean(second))
-	}
-	firstAbs, firstErr := filepath.Abs(first)
-	secondAbs, secondErr := filepath.Abs(second)
-	return firstErr == nil && secondErr == nil && filepath.Clean(firstAbs) == filepath.Clean(secondAbs)
 }
 
 func serveWithGUI(
@@ -304,37 +280,6 @@ func serveWithGUI(
 			identityCard.AddChild(identityHeading)
 
 			keyTable := guiidentitytable.New(false)
-			selectedKeyRow := func() (*guiidentitytable.Row, bool) {
-				selected := keyTable.Table.LeadRowIndex()
-				rows := keyTable.Table.RootRows()
-				if selected < 0 || selected >= len(rows) {
-					return nil, false
-				}
-				return rows[selected], true
-			}
-			keyTable.Table.ContextMenuCallback = func(geom.Point) unison.Menu {
-				row, ok := selectedKeyRow()
-				if !ok {
-					return nil
-				}
-				factory := unison.DefaultMenuFactory()
-				menu := factory.NewMenu(unison.PopupMenuTemporaryBaseID|unison.ContextMenuIDFlag, "", nil)
-				menu.InsertItem(-1, factory.NewItem(
-					unison.PopupMenuTemporaryBaseID+1|unison.ContextMenuIDFlag,
-					"Copy", unison.KeyBinding{}, nil,
-					func(unison.MenuItem) { unison.ClipboardSetText(row.CopyText()) },
-				))
-				return menu
-			}
-			keyTable.Table.KeyDownCallback = func(keyCode unison.KeyCode, modifiers mod.Modifiers, repeat bool) bool {
-				if keyCode == unison.KeyC && modifiers.OSMenuCommandDown() {
-					if row, ok := selectedKeyRow(); ok {
-						unison.ClipboardSetText(row.CopyText())
-						return true
-					}
-				}
-				return keyTable.Table.DefaultKeyDown(keyCode, modifiers, repeat)
-			}
 			keysScroll := unison.NewScrollPanel()
 			keyTable.AttachTo(keysScroll)
 			keysScroll.SetLayoutData(guiidentitytable.ScrollLayoutData(0, guiidentitytable.MaxVisibleRows))
@@ -418,17 +363,16 @@ func serveWithGUI(
 				}
 				_, preferred, _ := content.Sizes(geom.Size{})
 				current := window.ContentRect()
-				if current.Size.Width < preferred.Width || current.Size.Height < preferred.Height {
+				if current.Width < preferred.Width || current.Height < preferred.Height {
 					window.SetContentRect(geom.NewRect(
-						current.Point.X, current.Point.Y,
-						max(current.Size.Width, preferred.Width), max(current.Size.Height, preferred.Height),
+						current.X, current.Y,
+						max(current.Width, preferred.Width), max(current.Height, preferred.Height),
 					))
 					window.EnsureOnDisplay()
 				}
 			}
 
-			var refreshIdentities func()
-			refreshIdentities = func() {
+			refreshIdentities := func() {
 				endpoint, generation := endpointAgent.Snapshot()
 				if endpoint.Path == "" {
 					keyTable.SetRows(nil)
@@ -444,7 +388,7 @@ func serveWithGUI(
 				keysStatus.Tooltip = nil
 				keysStatus.MarkForLayoutAndRedraw()
 				go func() {
-					requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+					requestCtx, cancel := context.WithTimeout(ctx, upstream.RequestTimeout)
 					defer cancel()
 					identities, listErr := endpoint.List(requestCtx)
 					unison.InvokeTask(func() {

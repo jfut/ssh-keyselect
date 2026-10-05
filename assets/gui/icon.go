@@ -10,12 +10,22 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"sync"
 
 	"github.com/jfut/ssh-keyselect/assets"
 	"golang.org/x/image/draw"
 )
 
 var sourcePNG = assets.SourceLogoPNG
+
+// Decode the shared artwork lazily once instead of decoding it for every requested size.
+var sourceImage = sync.OnceValues(func() (image.Image, error) {
+	source, err := png.Decode(bytes.NewReader(sourcePNG))
+	if err != nil {
+		return nil, fmt.Errorf("decode source icon: %w", err)
+	}
+	return source, nil
+})
 
 // PNG returns the source icon scaled to the requested square size.
 func PNG(size int) ([]byte, error) {
@@ -26,9 +36,9 @@ func PNG(size int) ([]byte, error) {
 		return bytes.Clone(sourcePNG), nil
 	}
 
-	source, err := png.Decode(bytes.NewReader(sourcePNG))
+	source, err := sourceImage()
 	if err != nil {
-		return nil, fmt.Errorf("decode source icon: %w", err)
+		return nil, err
 	}
 	resized := image.NewNRGBA(image.Rect(0, 0, size, size))
 	draw.CatmullRom.Scale(resized, resized.Bounds(), source, source.Bounds(), draw.Src, nil)

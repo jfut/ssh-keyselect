@@ -62,7 +62,7 @@ func TestSignRequestUsesAgentWireFormat(t *testing.T) {
 	key := testIdentity("key").Blob
 	wantData := []byte("session data")
 	wantFlags := uint32(7)
-	want, err := hex.DecodeString("0d000000130000000b7373682d65643235353139000000000000000c73657373696f6e206461746100000007")
+	want, err := hex.DecodeString("0d000000330000000b7373682d656432353531390000002000000000000000000000000000000000000000000000000000000000000000000000000c73657373696f6e206461746100000007")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestReadFrameRejectsOversizedLength(t *testing.T) {
 }
 
 func testIdentity(comment string) identity.Identity {
-	blob, err := hex.DecodeString("0000000b7373682d6564323535313900000000")
+	blob, err := hex.DecodeString("0000000b7373682d65643235353139000000200000000000000000000000000000000000000000000000000000000000000000")
 	if err != nil {
 		panic(err)
 	}
@@ -143,7 +143,7 @@ func testIdentity(comment string) identity.Identity {
 // identityAnswerFixture keeps parser input independent from MarshalIdentities.
 func identityAnswerFixture(t *testing.T) []byte {
 	t.Helper()
-	message, err := hex.DecodeString("0c00000001000000130000000b7373682d656432353531390000000000000005616c706861")
+	message, err := hex.DecodeString("0c00000001000000330000000b7373682d6564323535313900000020000000000000000000000000000000000000000000000000000000000000000000000005616c706861")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,6 +23,7 @@ import (
 )
 
 type guiFileMenuActions struct {
+	enabled  func() bool
 	open     func()
 	save     func()
 	saveAs   func()
@@ -33,11 +34,13 @@ type guiConfigState struct {
 	cfg                 config.Config
 	filePath            string
 	dirty               bool
+	applying            bool
 	actualListen        string
 	effectiveListenMode transport.Mode
 	runtime             *guiRuntime
 	onUpdate            func()
 	onDirtyChange       func()
+	onApplyingChange    func()
 }
 
 // configForDisk stores endpoint paths in the native format for this OS.
@@ -46,21 +49,41 @@ func guiConfigForDisk(cfg config.Config) config.Config {
 	return cfg
 }
 
-func (s *guiConfigState) apply(cfg config.Config, dirty bool) error {
-	actualListen, effectiveMode, err := s.runtime.Apply(cfg)
-	if err != nil {
-		return err
+func (s *guiConfigState) apply(cfg config.Config, dirty bool, complete func(error)) {
+	if s.applying {
+		complete(errors.New("configuration is already being applied"))
+		return
 	}
-	cfg.Agent.Upstream = config.ExpandPath(cfg.Agent.Upstream)
-	cfg.Agent.Listen = config.ExpandPath(cfg.Agent.Listen)
-	s.cfg = cfg
-	s.actualListen = actualListen
-	s.effectiveListenMode = effectiveMode
-	s.setDirty(dirty)
-	if s.onUpdate != nil {
-		s.onUpdate()
+	s.applying = true
+	if s.onApplyingChange != nil {
+		s.onApplyingChange()
 	}
-	return nil
+	// A cancelled picker may still need a UI task to close. Keep the event loop
+	// running while the worker drains the old server and rebinds its endpoint.
+	go func() {
+		actualListen, effectiveMode, err := s.runtime.Apply(cfg)
+		unison.InvokeTask(func() {
+			s.applying = false
+			if s.runtime.ctx.Err() != nil {
+				return
+			}
+			if s.onApplyingChange != nil {
+				s.onApplyingChange()
+			}
+			if err == nil {
+				cfg.Agent.Upstream = config.ExpandPath(cfg.Agent.Upstream)
+				cfg.Agent.Listen = config.ExpandPath(cfg.Agent.Listen)
+				s.cfg = cfg
+				s.actualListen = actualListen
+				s.effectiveListenMode = effectiveMode
+				s.setDirty(dirty)
+				if s.onUpdate != nil {
+					s.onUpdate()
+				}
+			}
+			complete(err)
+		})
+	}()
 }
 
 func (s *guiConfigState) setDirty(dirty bool) {
@@ -82,6 +105,9 @@ func (s *guiConfigState) save() error {
 }
 
 func (s *guiConfigState) open() {
+	if s.applying {
+		return
+	}
 	path, ok := guiChooseConfigToOpen(s.filePath)
 	if !ok {
 		return
@@ -103,11 +129,13 @@ func (s *guiConfigState) open() {
 		showGUIErrorDialog("Could not open configuration.", err)
 		return
 	}
-	if err := s.apply(cfg, false); err != nil {
-		showGUIErrorDialog("Could not apply configuration.", err)
-		return
-	}
-	s.filePath = path
+	s.apply(cfg, false, func(err error) {
+		if err != nil {
+			showGUIErrorDialog("Could not apply configuration.", err)
+			return
+		}
+		s.filePath = path
+	})
 }
 
 func (s *guiConfigState) saveAs() {
@@ -230,15 +258,16 @@ func installGUIFileMenu(window *unison.Window, actions guiFileMenuActions) {
 		}
 	}
 	factory.BarForWindow(window, func(bar unison.Menu) {
+		canConfigure := func(unison.MenuItem) bool { return actions.enabled() }
 		file := factory.NewMenu(unison.UserBaseID+20, "File", nil)
-		file.InsertItem(-1, factory.NewItem(unison.UserBaseID+24, "Open...", unison.KeyBinding{KeyCode: unison.KeyO, Modifiers: mod.Control}, nil,
+		file.InsertItem(-1, factory.NewItem(unison.UserBaseID+24, "Open...", unison.KeyBinding{KeyCode: unison.KeyO, Modifiers: mod.Control}, canConfigure,
 			func(unison.MenuItem) { actions.open() }))
-		file.InsertItem(-1, factory.NewItem(unison.UserBaseID+25, "Save", unison.KeyBinding{KeyCode: unison.KeyS, Modifiers: mod.Control}, nil,
+		file.InsertItem(-1, factory.NewItem(unison.UserBaseID+25, "Save", unison.KeyBinding{KeyCode: unison.KeyS, Modifiers: mod.Control}, canConfigure,
 			func(unison.MenuItem) { actions.save() }))
-		file.InsertItem(-1, factory.NewItem(unison.UserBaseID+26, "Save As...", unison.KeyBinding{KeyCode: unison.KeyS, Modifiers: mod.Control | mod.Shift}, nil,
+		file.InsertItem(-1, factory.NewItem(unison.UserBaseID+26, "Save As...", unison.KeyBinding{KeyCode: unison.KeyS, Modifiers: mod.Control | mod.Shift}, canConfigure,
 			func(unison.MenuItem) { actions.saveAs() }))
 		file.InsertSeparator(-1, true)
-		file.InsertItem(-1, factory.NewItem(unison.UserBaseID+27, "Settings", unison.KeyBinding{}, nil,
+		file.InsertItem(-1, factory.NewItem(unison.UserBaseID+27, "Settings", unison.KeyBinding{}, canConfigure,
 			func(unison.MenuItem) { actions.settings() }))
 		file.InsertSeparator(-1, true)
 		file.InsertItem(-1, factory.NewItem(unison.UserBaseID+21, "Exit", unison.KeyBinding{}, nil,

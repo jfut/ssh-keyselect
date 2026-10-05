@@ -18,15 +18,20 @@ func openTerminal(_ string) (*terminalSession, error) {
 	if usesMSYS2OrCygwinTerminal() {
 		// Git Bash and Cygwin provide terminal input through inherited streams, not CONIN$.
 		// Use raw console input when available so the picker can edit and echo each key itself.
+		inputReader, err := newWindowsTerminalInput(os.Stdin)
+		if err != nil {
+			return nil, err
+		}
 		liveEcho, restoreInputMode := enableRawTerminalInput(os.Stdin)
 		restoreOutputMode := enableVirtualTerminalOutput(os.Stdout)
 		width, _, _ := term.GetSize(int(os.Stdout.Fd()))
 		return &terminalSession{
-			reader:    os.Stdin,
+			reader:    inputReader,
 			writer:    os.Stdout,
 			width:     width,
 			echoInput: !liveEcho,
 			liveEcho:  liveEcho,
+			stopInput: inputReader.Close,
 			close: func() error {
 				return errors.Join(restoreInputMode(), restoreOutputMode())
 			},
@@ -43,14 +48,21 @@ func openTerminal(_ string) (*terminalSession, error) {
 		_ = input.Close()
 		return nil, err
 	}
+	inputReader, err := newWindowsTerminalInput(input)
+	if err != nil {
+		_ = input.Close()
+		_ = output.Close()
+		return nil, err
+	}
 	liveEcho, restoreInputMode := enableRawTerminalInput(input)
 	restoreOutputMode := enableVirtualTerminalOutput(output)
 	width, _, _ := term.GetSize(int(output.Fd()))
 	return &terminalSession{
-		reader:   input,
-		writer:   output,
-		width:    width,
-		liveEcho: liveEcho,
+		reader:    inputReader,
+		writer:    output,
+		width:     width,
+		liveEcho:  liveEcho,
+		stopInput: inputReader.Close,
 		close: func() error {
 			return errors.Join(restoreInputMode(), restoreOutputMode(), input.Close(), output.Close())
 		},

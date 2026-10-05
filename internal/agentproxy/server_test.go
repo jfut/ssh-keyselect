@@ -6,6 +6,7 @@ package agentproxy
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -932,13 +933,13 @@ func cloneByteSlices(values [][]byte) [][]byte {
 
 func proxyTestIdentity(comment string) identity.Identity {
 	algorithm := []byte("ssh-ed25519")
-	keyData := []byte(comment)
+	keyData := sha256.Sum256([]byte(comment))
 	blob := make([]byte, 8+len(algorithm)+len(keyData))
 	binary.BigEndian.PutUint32(blob[:4], uint32(len(algorithm)))
 	copy(blob[4:], algorithm)
 	keyOffset := 4 + len(algorithm)
 	binary.BigEndian.PutUint32(blob[keyOffset:keyOffset+4], uint32(len(keyData)))
-	copy(blob[keyOffset+4:], keyData)
+	copy(blob[keyOffset+4:], keyData[:])
 	id, err := identity.New(blob, []byte(comment))
 	if err != nil {
 		panic(err)

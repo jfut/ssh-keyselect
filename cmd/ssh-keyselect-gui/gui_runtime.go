@@ -45,16 +45,6 @@ func resolveGUIListen(cfg config.Config) (string, transport.Mode, error) {
 	return path, mode, nil
 }
 
-// startGUIComponents registers the tray icon before the proxy can fail to bind its endpoint.
-func startGUIComponents(
-	startTray func() (func() error, error),
-	startProxy func() error,
-) (func() error, error, error) {
-	cleanupTray, trayErr := startTray()
-	proxyErr := startProxy()
-	return cleanupTray, trayErr, proxyErr
-}
-
 // guiEndpointAgent lets the running proxy and refresh action safely use the latest endpoint.
 type guiEndpointAgent struct {
 	mu       sync.RWMutex
@@ -100,6 +90,7 @@ type guiListenerState struct {
 
 // guiRuntime restarts serving at a changed endpoint and invalidates old client selections.
 type guiRuntime struct {
+	mu              sync.Mutex
 	ctx             context.Context
 	server          *agentproxy.Server
 	agent           *guiEndpointAgent
@@ -112,6 +103,12 @@ type guiRuntime struct {
 }
 
 func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
+	// Apply and Close run outside the UI thread; serialize their listener lifetimes.
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.ctx.Err(); err != nil {
+		return "", "", err
+	}
 	if err := cfg.Validate(); err != nil {
 		return "", "", err
 	}
@@ -196,7 +193,11 @@ func (r *guiRuntime) startListener(ln net.Listener, cleanup func()) {
 		if err != nil && serveCtx.Err() == nil {
 			logger.Error("SSH agent proxy stopped", "error", err)
 			if r.onServeError != nil {
-				unison.InvokeTask(func() { r.onServeError(err) })
+				unison.InvokeTask(func() {
+					if serveCtx.Err() == nil {
+						r.onServeError(err)
+					}
+				})
 			}
 		}
 	}()
@@ -215,6 +216,10 @@ func (r *guiRuntime) stopListener() {
 	}
 }
 
-func (r *guiRuntime) Close() { r.stopListener() }
+func (r *guiRuntime) Close() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stopListener()
+}
 
 var _ upstream.Agent = (*guiEndpointAgent)(nil)

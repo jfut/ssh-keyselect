@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="assets/ssh-keyselect-logo.png" alt="SSH KeySelect" width="128" height="128">
+</div>
+
 # SSH KeySelect
 
 Selective SSH Agent Proxy

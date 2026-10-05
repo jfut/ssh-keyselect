@@ -22,11 +22,6 @@ func guiDisplayEndpointPath(endpoint string) string {
 	if winpath.IsNamedPipe(endpoint) {
 		return guiWindowsPathForDisplay(endpoint)
 	}
-	lower := strings.ToLower(endpoint)
-	if strings.HasPrefix(lower, "/cygdrive/") && len(endpoint) >= 11 &&
-		(len(endpoint) == 11 || endpoint[11] == '/') {
-		return guiWindowsPathForDisplay(filepath.Clean(strings.ToUpper(endpoint[10:11]) + ":" + filepath.FromSlash(endpoint[11:])))
-	}
 	if native, err := winpath.NativeSocketPath(endpoint); err == nil {
 		return guiWindowsPathForDisplay(native)
 	}

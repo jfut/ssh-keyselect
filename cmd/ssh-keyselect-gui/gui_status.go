@@ -18,7 +18,6 @@ import (
 	"github.com/richardwilkes/unison"
 	"github.com/richardwilkes/unison/enums/align"
 	"github.com/richardwilkes/unison/enums/behavior"
-	"github.com/richardwilkes/unison/enums/mod"
 	"github.com/richardwilkes/unison/enums/paintstyle"
 )
 
@@ -169,7 +168,7 @@ func showGUIAboutDialog() {
 	unison.UninstallFocusBorders(dependencyText, dependencyText)
 	// Keep the license text clear of the rounded outline on all four sides.
 	dependencyText.SetBorder(unison.NewEmptyBorder(geom.NewUniformInsets(5)))
-	guiMakeFieldReadOnly(dependencyText)
+	guistyle.MakeFieldReadOnly(dependencyText)
 	dependencyScroll := unison.NewScrollPanel()
 	dependencyScroll.BackgroundInk = unison.RGB(255, 255, 255)
 	dependencyScroll.SetBorder(unison.NewLineBorder(guiBorderInk, geom.NewUniformSize(8), geom.NewUniformInsets(1), false))
@@ -185,62 +184,14 @@ func showGUIAboutDialog() {
 	content.AddChild(creditsNote)
 	if dialog, err := newGUIDialog("About "+branding.Name, nil, nil, content, []*unison.DialogButtonInfo{unison.NewOKButtonInfo()}); err == nil {
 		contentRect := dialog.window.ContentRect()
-		contentRect.Size.Width = max(contentRect.Size.Width, 500)
-		contentRect.Size.Height = max(contentRect.Size.Height, 390)
+		contentRect.Width = max(contentRect.Width, 500)
+		contentRect.Height = max(contentRect.Height, 390)
 		dialog.window.SetContentRect(contentRect)
 		dialog.window.ValidateLayout()
 		dependencyText.SetSelectionToStart()
 		dependencyScroll.SetPosition(0, 0)
 		dialog.FocusButton(0)
 		dialog.RunModal()
-	}
-}
-
-// guiMakeFieldReadOnly keeps mouse selection, navigation, and copying available without allowing edits.
-func guiMakeFieldReadOnly(field *unison.Field) {
-	field.NoSelectAllOnFocus = true
-	field.RuneTypedCallback = func(rune) bool { return true }
-	field.KeyDownCallback = func(keyCode unison.KeyCode, modifiers mod.Modifiers, repeat bool) bool {
-		if modifiers.OSMenuCommandDown() {
-			switch keyCode {
-			case unison.KeyA, unison.KeyC, unison.KeyLeft, unison.KeyRight, unison.KeyUp, unison.KeyDown:
-				return field.DefaultKeyDown(keyCode, modifiers, repeat)
-			default:
-				return true
-			}
-		}
-		switch keyCode {
-		case unison.KeyBackspace, unison.KeyDelete, unison.KeyReturn, unison.KeyNumPadEnter:
-			return true
-		default:
-			return field.DefaultKeyDown(keyCode, modifiers, repeat)
-		}
-	}
-	field.RemoveCmdHandler(unison.CutItemID)
-	field.RemoveCmdHandler(unison.PasteItemID)
-	field.RemoveCmdHandler(unison.DeleteItemID)
-	field.ContextMenuCallback = func(geom.Point) unison.Menu {
-		factory := unison.DefaultMenuFactory()
-		menu := factory.NewMenu(unison.PopupMenuTemporaryBaseID|unison.ContextMenuIDFlag, "", nil)
-		if field.CanCopy() {
-			menu.InsertItem(-1, factory.NewItem(
-				unison.PopupMenuTemporaryBaseID+1|unison.ContextMenuIDFlag,
-				"Copy", unison.KeyBinding{}, nil,
-				func(unison.MenuItem) { field.Copy() },
-			))
-		}
-		if field.CanSelectAll() {
-			menu.InsertItem(-1, factory.NewItem(
-				unison.PopupMenuTemporaryBaseID+2|unison.ContextMenuIDFlag,
-				"Select All", unison.KeyBinding{}, nil,
-				func(unison.MenuItem) { field.SelectAll() },
-			))
-		}
-		if menu.Count() == 0 {
-			menu.Dispose()
-			return nil
-		}
-		return menu
 	}
 }
 
@@ -360,7 +311,7 @@ func guiAddConnectionModeRow(card *unison.Panel, markerInk, modeFill, modeInk un
 	pathField.EditableInk = guiInputInk
 	pathField.OnBackgroundInk = guiTextInk
 	pathField.OnEditableInk = guiTextInk
-	guiMakeFieldReadOnly(pathField)
+	guistyle.MakeFieldReadOnly(pathField)
 	unison.UninstallFocusBorders(pathField, pathField)
 	pathField.SetBorder(unison.NewEmptyBorder(geom.Insets{}))
 	pathField.SetLayoutData(&unison.FlexLayoutData{

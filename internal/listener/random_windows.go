@@ -6,16 +6,12 @@
 package listener
 
 import (
-	"context"
+	"crypto/rand"
 	"fmt"
-	"net"
 	"os"
-	"time"
 
-	"github.com/Microsoft/go-winio"
 	"github.com/jfut/ssh-keyselect/internal/transport"
 	"github.com/jfut/ssh-keyselect/internal/winpath"
-	"github.com/jfut/ssh-keyselect/internal/winsocket"
 )
 
 const randomPipePrefix = `\\.\pipe\ssh-keyselect.`
@@ -26,10 +22,7 @@ func DefaultTUIEndpointForMode(upstream string, requested transport.Mode) (strin
 	if err != nil {
 		return "", "", err
 	}
-	token, err := randomToken()
-	if err != nil {
-		return "", "", err
-	}
+	token := rand.Text()
 	name := "s.ssh-keyselect." + token
 	switch mode {
 	case transport.NamedPipe:
@@ -67,47 +60,4 @@ func ResolveMode(listenPath, upstream string, requested transport.Mode) (transpo
 		return transport.NamedPipe, nil
 	}
 	return transport.Unix, nil
-}
-
-// ProbeWithMode checks whether the selected Windows endpoint transport is accepting connections.
-func ProbeWithMode(path string, mode transport.Mode) error {
-	var err error
-	if mode == transport.Auto {
-		mode, err = winsocket.DetectMode(path)
-	} else {
-		mode, err = ResolveMode(path, "", mode)
-	}
-	if err != nil {
-		return err
-	}
-	if mode == transport.Cygwin {
-		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
-		defer cancel()
-		conn, err := winsocket.Dial(ctx, path, mode)
-		if err != nil {
-			return err
-		}
-		return conn.Close()
-	}
-	if mode == transport.Unix || mode == transport.WSL1 {
-		nativePath, err := winpath.NativeSocketPath(path)
-		if err != nil {
-			return err
-		}
-		conn, err := (&net.Dialer{Timeout: 250 * time.Millisecond}).Dial("unix", nativePath)
-		if err != nil {
-			return err
-		}
-		return conn.Close()
-	}
-	if !winpath.IsNamedPipe(path) {
-		return fmt.Errorf("named-pipe mode requires a named-pipe endpoint")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
-	defer cancel()
-	conn, err := winio.DialPipeContext(ctx, path)
-	if err != nil {
-		return err
-	}
-	return conn.Close()
 }

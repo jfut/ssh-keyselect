@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,12 +21,9 @@ import (
 
 // ListenWithMode starts the requested agent transport on Unix platforms.
 func ListenWithMode(path string, requested transport.Mode) (net.Listener, func(), error) {
-	mode, err := transport.ParseMode(string(requested))
+	_, err := ResolveMode(path, "", requested)
 	if err != nil {
 		return nil, nil, err
-	}
-	if mode != transport.Auto && mode != transport.Unix && mode != transport.WSL1 {
-		return nil, nil, fmt.Errorf("listen mode %q is supported only on Windows", mode)
 	}
 	if path == "" {
 		return nil, nil, errors.New("listen socket path is empty")
@@ -60,6 +58,8 @@ func ListenWithMode(path string, requested transport.Mode) (net.Listener, func()
 	if err != nil {
 		return nil, nil, fmt.Errorf("listen on Unix socket: %w", err)
 	}
+	// Cleanup checks ownership before unlinking; net.UnixListener's automatic unlink would bypass that check.
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
 	if err := os.Chmod(path, 0600); err != nil {
 		_ = ln.Close()
 		_ = os.Remove(path)
@@ -71,12 +71,12 @@ func ListenWithMode(path string, requested transport.Mode) (net.Listener, func()
 		_ = os.Remove(path)
 		return nil, nil, fmt.Errorf("inspect created Unix socket: %w", err)
 	}
-	cleanup := func() {
+	cleanup := sync.OnceFunc(func() {
 		_ = ln.Close()
 		current, err := os.Lstat(path)
 		if err == nil && os.SameFile(created, current) {
 			_ = os.Remove(path)
 		}
-	}
+	})
 	return ln, cleanup, nil
 }

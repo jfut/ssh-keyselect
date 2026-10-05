@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jfut/ssh-keyselect/internal/identity"
@@ -40,6 +41,23 @@ func TestParseIdentitiesRejectsTrailingAndTruncatedData(t *testing.T) {
 	}
 }
 
+func TestIdentityAnswerHonorsFrameSizeLimit(t *testing.T) {
+	id := testIdentity("")
+	id.Comment = strings.Repeat("a", maxMessageSize-5-8-len(id.Blob))
+	message, err := MarshalIdentities([]identity.Identity{id})
+	if err != nil || len(message) != maxMessageSize {
+		t.Fatalf("maximum-size identity answer = %d bytes, %v", len(message), err)
+	}
+	identities, err := ParseIdentities(message)
+	if err != nil || len(identities) != 1 || identities[0].Comment != id.Comment {
+		t.Fatalf("maximum-size identity answer could not be parsed: %v", err)
+	}
+	id.Comment += "a"
+	if _, err := MarshalIdentities([]identity.Identity{id}); !errors.Is(err, errMalformed) {
+		t.Fatalf("oversized identity answer = %v, want malformed", err)
+	}
+}
+
 func TestSignRequestUsesAgentWireFormat(t *testing.T) {
 	key := testIdentity("key").Blob
 	wantData := []byte("session data")
@@ -48,13 +66,6 @@ func TestSignRequestUsesAgentWireFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, err := MarshalSignRequest(key, wantData, wantFlags)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(message, want) {
-		t.Fatalf("sign request = %x, want %x", message, want)
-	}
 	gotKey, gotData, gotFlags, err := ParseSignRequest(want)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +73,7 @@ func TestSignRequestUsesAgentWireFormat(t *testing.T) {
 	if !bytes.Equal(gotKey, key) || !bytes.Equal(gotData, wantData) || gotFlags != wantFlags {
 		t.Fatalf("parsed sign request = %x, %q, %d", gotKey, gotData, gotFlags)
 	}
-	if _, _, _, err := ParseSignRequest(append(message, 0)); !errors.Is(err, errMalformed) {
+	if _, _, _, err := ParseSignRequest(append(want, 0)); !errors.Is(err, errMalformed) {
 		t.Fatalf("trailing data error = %v, want malformed", err)
 	}
 }

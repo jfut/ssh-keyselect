@@ -80,7 +80,7 @@ func configForSave(cfg Config) saveConfig {
 	}
 }
 
-// Default returns conservative defaults for the first supported proxy version.
+// Default returns conservative defaults for GUI and terminal commands.
 func Default() Config {
 	return Config{
 		Agent: AgentConfig{UpstreamMode: transport.Auto, ListenMode: transport.Auto},

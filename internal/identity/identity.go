@@ -26,12 +26,10 @@ type Identity struct {
 
 // New derives display metadata from an SSH public-key blob and its agent comment.
 func New(blob, comment []byte) (Identity, error) {
-	algorithm, rest, err := sshwire.ReadString(blob)
+	algorithm, _, err := sshwire.ReadString(blob)
 	if err != nil || len(algorithm) == 0 {
 		return Identity{}, errors.New("invalid SSH public-key blob")
 	}
-	_ = rest // Algorithm-specific fields are opaque to the proxy.
-
 	return Identity{
 		Blob:        append([]byte(nil), blob...),
 		Comment:     string(comment),

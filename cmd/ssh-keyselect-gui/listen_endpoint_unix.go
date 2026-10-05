@@ -12,10 +12,6 @@ import (
 	"path/filepath"
 )
 
-func guiSameListenEndpoint(first, second string) bool {
-	return guiSamePath(first, second)
-}
-
 // guiListenPathExists detects any filesystem entry that would occupy the configured socket path.
 func guiListenPathExists(endpoint string) (bool, error) {
 	if endpoint == "" {

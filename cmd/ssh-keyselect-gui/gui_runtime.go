@@ -28,7 +28,7 @@ import (
 func resolveGUIListen(cfg config.Config) (string, transport.Mode, error) {
 	cfg.Agent.Upstream = config.ExpandPath(cfg.Agent.Upstream)
 	path := config.ExpandPath(cfg.Agent.Listen)
-	mode := cfg.Agent.ListenMode
+	var mode transport.Mode
 	var err error
 	if path == "" {
 		path, mode, err = guiDefaultListenEndpoint(cfg.Agent.Upstream, cfg.Agent.ListenMode)
@@ -39,7 +39,7 @@ func resolveGUIListen(cfg config.Config) (string, transport.Mode, error) {
 		return "", "", err
 	}
 	path = guiNormalizeListenPathForMode(path, mode)
-	if guiSamePath(path, cfg.Agent.Upstream) {
+	if transport.SameEndpoint(path, cfg.Agent.Upstream) {
 		return "", "", errors.New("listen and upstream endpoints must be different")
 	}
 	return path, mode, nil
@@ -120,7 +120,7 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 	if err != nil {
 		return "", "", err
 	}
-	if guiSamePath(path, r.listenPath) {
+	if transport.SameEndpoint(path, r.listenPath) {
 		path = r.listenPath
 	}
 
@@ -145,7 +145,7 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 	var cleanup func()
 	// Rebinding the same filesystem location under a different Windows transport
 	// requires closing our current listener first so its owned socket file is removed.
-	if !hadListener || !guiSameListenEndpoint(path, r.listenPath) {
+	if !hadListener || !transport.SameEndpoint(path, r.listenPath) {
 		ln, cleanup, err = listener.ListenWithMode(path, mode)
 		if err != nil {
 			return "", "", err
@@ -217,13 +217,4 @@ func (r *guiRuntime) stopListener() {
 
 func (r *guiRuntime) Close() { r.stopListener() }
 
-func (r *guiRuntime) EffectiveUpstreamMode() (transport.Mode, error) {
-	endpoint, _ := r.agent.Snapshot()
-	if endpoint.Path == "" {
-		return transport.Auto, nil
-	}
-	return upstream.ResolveMode(endpoint.Path, endpoint.Mode)
-}
-
 var _ upstream.Agent = (*guiEndpointAgent)(nil)
-var _ upstream.SessionAgent = (*guiEndpointAgent)(nil)

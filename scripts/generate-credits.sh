@@ -67,7 +67,7 @@ awk -v root="$root_module" '
 	done < "$credits_workdir/dependencies.tsv"
 } > internal/credits/dependencies.txt
 
-unison_dir="$(GOFLAGS=-tags=gui go list -m -f '{{.Dir}}' github.com/richardwilkes/unison)"
+IFS=$'\t' read -r unison_dir unison_version < <(GOFLAGS=-tags=gui go list -m -f '{{printf "%s\t%s" .Dir .Version}}' github.com/richardwilkes/unison)
 {
 	printf 'ssh-keyselect third-party license notices\n'
 	printf 'The project license is in LICENSE. These notices cover dependencies and bundled font resources.\n\n'
@@ -89,8 +89,8 @@ unison_dir="$(GOFLAGS=-tags=gui go list -m -f '{{.Dir}}' github.com/richardwilke
 		fi
 		cat "$license_file"
 	done < "$credits_workdir/dependencies.tsv"
-	printf '\n\nRoboto font (bundled by Unison): Apache-2.0\nhttps://github.com/richardwilkes/unison/tree/v0.108.0/resources/fonts\n----------------------------------------------------------------\n'
+	printf '\n\nRoboto font (bundled by Unison): Apache-2.0\nhttps://github.com/richardwilkes/unison/tree/%s/resources/fonts\n----------------------------------------------------------------\n' "$unison_version"
 	cat "$unison_dir/resources/fonts/Roboto License.txt"
-	printf '\n\nDejaVu Sans Mono font (bundled by Unison): Bitstream Vera / DejaVu Fonts License\nhttps://github.com/richardwilkes/unison/tree/v0.108.0/resources/fonts\n----------------------------------------------------------------\n'
+	printf '\n\nDejaVu Sans Mono font (bundled by Unison): Bitstream Vera / DejaVu Fonts License\nhttps://github.com/richardwilkes/unison/tree/%s/resources/fonts\n----------------------------------------------------------------\n' "$unison_version"
 	cat "$unison_dir/resources/fonts/DejaVu Sans Mono License.txt"
 } > CREDITS

@@ -17,42 +17,38 @@ const namedPipePrefix = `\\.\pipe\`
 
 // IsNamedPipe reports whether path names a local Windows named pipe.
 func IsNamedPipe(path string) bool {
-	return strings.HasPrefix(strings.ToLower(path), strings.ToLower(namedPipePrefix))
+	return len(path) >= len(namedPipePrefix) && strings.EqualFold(path[:len(namedPipePrefix)], namedPipePrefix)
 }
 
 // IsGitBashPath reports whether path uses a Git Bash/MSYS2 drive-mount format.
-func IsGitBashPath(path string) bool { return isGitBashPath(path) }
+func IsGitBashPath(path string) bool {
+	return isDriveMountPath(path) || path == "/tmp" || strings.HasPrefix(path, "/tmp/")
+}
 
 // IsWSL1DriveMountPath reports whether path uses a WSL1 Windows-drive mount.
-func IsWSL1DriveMountPath(path string) bool { return isWSL1DriveMountPath(path) }
+func IsWSL1DriveMountPath(path string) bool {
+	return len(path) >= 8 && strings.HasPrefix(path, "/mnt/") && isASCIIAlpha(path[5]) && path[6] == '/'
+}
 
 // GitBashSocketPath returns a short per-user endpoint in the same directory used by Git Bash ssh-agent.
 func GitBashSocketPath(name string) (string, error) {
-	home, err := os.UserHomeDir()
+	nativePath, err := nativeAgentSocketPath(name)
 	if err != nil {
-		return "", fmt.Errorf("locate user home directory: %w", err)
-	}
-	nativePath := filepath.Join(home, ".ssh", "agent", name)
-	if len(nativePath) >= 108 {
-		return "", fmt.Errorf("Windows Unix socket path is too long: %s", nativePath)
+		return "", err
 	}
 	return ToGitBashPath(nativePath)
 }
 
 // CompatibleSocketPath returns a socket path in the mount style of the upstream shell.
 func CompatibleSocketPath(upstream, name string) (string, error) {
-	if isWSL1DriveMountPath(upstream) {
-		nativePath, err := nativeAgentSocketPath(name)
-		if err != nil {
-			return "", err
-		}
-		gitBashPath, err := ToGitBashPath(nativePath)
-		if err != nil {
-			return "", err
-		}
-		return "/mnt" + gitBashPath, nil
+	path, err := GitBashSocketPath(name)
+	if err != nil {
+		return "", err
 	}
-	return GitBashSocketPath(name)
+	if IsWSL1DriveMountPath(upstream) {
+		path = "/mnt" + path
+	}
+	return path, nil
 }
 
 // NativeSocketPath converts a Git Bash path to the native path expected by Winsock.
@@ -60,8 +56,13 @@ func NativeSocketPath(path string) (string, error) {
 	if isDriveMountPath(path) {
 		return filepath.Clean(strings.ToUpper(path[1:2]) + ":" + filepath.FromSlash(path[2:])), nil
 	}
-	if isWSL1DriveMountPath(path) {
+	if IsWSL1DriveMountPath(path) {
 		return filepath.Clean(strings.ToUpper(path[5:6]) + ":" + filepath.FromSlash(path[6:])), nil
+	}
+	// Cygwin drive mounts must resolve identically in display, dialing, and endpoint comparisons.
+	if len(path) >= 11 && strings.EqualFold(path[:10], "/cygdrive/") && isASCIIAlpha(path[10]) &&
+		(len(path) == 11 || path[11] == '/') {
+		return filepath.Clean(strings.ToUpper(path[10:11]) + ":" + filepath.FromSlash(path[11:])), nil
 	}
 	if path == "/tmp" || strings.HasPrefix(path, "/tmp/") {
 		tempDir := os.Getenv("TEMP")
@@ -93,14 +94,6 @@ func ToGitBashPath(path string) (string, error) {
 	return "/" + strings.ToLower(volume[:1]) + "/" + filepath.ToSlash(rest), nil
 }
 
-func isGitBashPath(path string) bool {
-	return isDriveMountPath(path) || path == "/tmp" || strings.HasPrefix(path, "/tmp/")
-}
-
-func isWSL1DriveMountPath(path string) bool {
-	return len(path) >= 8 && strings.HasPrefix(path, "/mnt/") && isASCIIAlpha(path[5]) && path[6] == '/'
-}
-
 func nativeAgentSocketPath(name string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -108,7 +101,7 @@ func nativeAgentSocketPath(name string) (string, error) {
 	}
 	nativePath := filepath.Join(home, ".ssh", "agent", name)
 	if len(nativePath) >= 108 {
-		return "", fmt.Errorf("Windows Unix socket path is too long: %s", nativePath)
+		return "", fmt.Errorf("windows Unix socket path is too long: %s", nativePath)
 	}
 	return nativePath, nil
 }

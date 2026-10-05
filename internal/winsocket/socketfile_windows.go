@@ -30,9 +30,8 @@ import (
 
 var cygwinSocketFilePattern = regexp.MustCompile(`^!<socket >([0-9]+) s ([0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{8}){3})$`)
 
-// SocketFile holds the transport metadata stored in a Cygwin-compatible endpoint file.
-type SocketFile struct {
-	Mode     transport.Mode
+// socketFile holds the metadata stored in a Cygwin endpoint file.
+type socketFile struct {
 	Port     uint16
 	GUIDData [16]byte
 }
@@ -46,59 +45,73 @@ func DetectMode(path string) (transport.Mode, error) {
 	if err != nil {
 		return transport.Unix, nil
 	}
-	contents, err := os.ReadFile(nativePath)
+	contents, err := readContents(nativePath)
 	if err != nil {
 		return transport.Unix, nil
 	}
-	contents = trimSocketFile(contents)
 	if !bytes.HasPrefix(contents, []byte("!<socket >")) {
 		return transport.Unix, nil
 	}
-	info, err := parse(contents)
-	if err != nil {
+	if _, err := parse(contents); err != nil {
 		return "", err
 	}
-	return info.Mode, nil
+	return transport.Cygwin, nil
 }
 
 // read loads and parses transport metadata from a compatibility socket file.
-func read(path string) (SocketFile, error) {
+func read(path string) (socketFile, error) {
 	nativePath, err := winpath.NativeSocketPath(path)
 	if err != nil {
-		return SocketFile{}, err
+		return socketFile{}, err
 	}
-	contents, err := os.ReadFile(nativePath)
+	contents, err := readContents(nativePath)
 	if err != nil {
-		return SocketFile{}, err
+		return socketFile{}, err
 	}
-	return parse(trimSocketFile(contents))
+	return parse(contents)
+}
+
+// Socket metadata is small; a misconfigured endpoint must not read an arbitrary-sized file.
+func readContents(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	const maxSocketFileSize = 256
+	contents, err := io.ReadAll(io.LimitReader(file, maxSocketFileSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(contents) > maxSocketFileSize {
+		return nil, fmt.Errorf("compatibility socket file is too large")
+	}
+	return trimSocketFile(contents), nil
 }
 
 // parse converts the text representation of a Cygwin-compatible socket file to metadata.
-func parse(contents []byte) (SocketFile, error) {
+func parse(contents []byte) (socketFile, error) {
 	text := string(contents)
 	if match := cygwinSocketFilePattern.FindStringSubmatch(text); match != nil {
 		return makeSocketFile(match[1], match[2])
 	}
-	return SocketFile{}, fmt.Errorf("unrecognized compatibility socket file")
+	return socketFile{}, fmt.Errorf("unrecognized compatibility socket file")
 }
 
 // Dial connects to a Cygwin-compatible socket and completes its handshake.
-func Dial(ctx context.Context, path string, mode transport.Mode) (net.Conn, error) {
+func Dial(ctx context.Context, path string) (net.Conn, error) {
 	info, err := read(path)
 	if err != nil {
 		return nil, fmt.Errorf("read compatible socket file: %w", err)
 	}
-	if info.Mode != mode {
-		return nil, fmt.Errorf("mode %s does not match socket file mode %s", mode, info.Mode)
-	}
-	if mode != transport.Cygwin {
-		return nil, fmt.Errorf("socket-file transport %q is not supported", mode)
-	}
-	conn, err := dialLoopbackTCP(ctx, info.Port, nil)
+	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(info.Port)))
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp4", address)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connect to loopback socket: %w", err)
 	}
+	// Cancellation must also interrupt the handshake after TCP dialing has completed.
+	stopClose := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopClose()
 	if err := cygwinClientHandshake(ctx, conn, info.GUIDData); err != nil {
 		_ = conn.Close()
 		return nil, err
@@ -107,10 +120,7 @@ func Dial(ctx context.Context, path string, mode transport.Mode) (net.Conn, erro
 }
 
 // Listen publishes a Cygwin-compatible socket file and accepts agent connections.
-func Listen(path string, mode transport.Mode) (net.Listener, func(), error) {
-	if mode != transport.Cygwin {
-		return nil, nil, fmt.Errorf("socket-file listener does not support mode %q", mode)
-	}
+func Listen(path string) (net.Listener, func(), error) {
 	if path == "" {
 		return nil, nil, fmt.Errorf("listen socket path is empty")
 	}
@@ -126,13 +136,8 @@ func Listen(path string, mode transport.Mode) (net.Listener, func(), error) {
 		return nil, nil, fmt.Errorf("listen on loopback TCP socket: %w", err)
 	}
 	port := uint16(tcpListener.Addr().(*net.TCPAddr).Port)
-	guidData, err := randomGUIDData()
-	if err != nil {
-		_ = tcpListener.Close()
-		return nil, nil, err
-	}
+	guidData := randomGUIDData()
 	guid := formatGUID(guidData)
-	info := SocketFile{Mode: mode, Port: port, GUIDData: guidData}
 	fileText := fmt.Sprintf("!<socket >%d s %s", port, guid)
 	file, err := os.OpenFile(nativePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
@@ -161,40 +166,74 @@ func Listen(path string, mode transport.Mode) (net.Listener, func(), error) {
 		_ = tcpListener.Close()
 		return nil, nil, fmt.Errorf("inspect compatibility socket file: %w", err)
 	}
-	ln := &compatListener{listener: tcpListener, path: nativePath, fileInfo: fileInfo, info: info}
-	cleanup := ln.close
+	ln := &cygwinListener{
+		listener: tcpListener, path: nativePath, fileInfo: fileInfo, guid: guidData,
+		handshakes: make(map[net.Conn]struct{}),
+	}
+	cleanup := func() { _ = ln.Close() }
 	return ln, cleanup, nil
 }
 
-type compatListener struct {
-	listener  *net.TCPListener
-	path      string
-	fileInfo  os.FileInfo
-	info      SocketFile
-	closeOnce sync.Once
-	closeErr  error
+type cygwinListener struct {
+	listener   *net.TCPListener
+	path       string
+	fileInfo   os.FileInfo
+	guid       [16]byte
+	closeOnce  sync.Once
+	closeErr   error
+	mu         sync.Mutex
+	closed     bool
+	handshakes map[net.Conn]struct{}
 }
 
-func (l *compatListener) Accept() (net.Conn, error) {
+func (l *cygwinListener) Accept() (net.Conn, error) {
 	for {
 		conn, err := l.listener.AcceptTCP()
 		if err != nil {
 			return nil, err
 		}
-		_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
-		err = cygwinServerHandshake(conn, l.info.GUIDData)
+		l.mu.Lock()
+		if l.closed {
+			l.mu.Unlock()
+			_ = conn.Close()
+			return nil, net.ErrClosed
+		}
+		l.handshakes[conn] = struct{}{}
+		l.mu.Unlock()
+		err = conn.SetDeadline(time.Now().Add(10 * time.Second))
+		if err == nil {
+			err = cygwinServerHandshake(conn, l.guid)
+		}
+		l.mu.Lock()
+		delete(l.handshakes, conn)
+		closed := l.closed
+		l.mu.Unlock()
+		if closed {
+			_ = conn.Close()
+			return nil, net.ErrClosed
+		}
 		if err != nil {
 			_ = conn.Close()
 			continue
 		}
-		_ = conn.SetDeadline(time.Time{})
+		if err := conn.SetDeadline(time.Time{}); err != nil {
+			_ = conn.Close()
+			continue
+		}
 		return conn, nil
 	}
 }
 
-func (l *compatListener) Close() error {
+func (l *cygwinListener) Close() error {
 	l.closeOnce.Do(func() {
+		// Closing the listener must release handshakes that have not reached the proxy yet.
+		l.mu.Lock()
+		l.closed = true
 		l.closeErr = l.listener.Close()
+		for conn := range l.handshakes {
+			_ = conn.Close()
+		}
+		l.mu.Unlock()
 		if current, err := os.Stat(l.path); err == nil && os.SameFile(l.fileInfo, current) {
 			_ = os.Remove(l.path)
 		}
@@ -202,20 +241,18 @@ func (l *compatListener) Close() error {
 	return l.closeErr
 }
 
-func (l *compatListener) Addr() net.Addr { return l.listener.Addr() }
+func (l *cygwinListener) Addr() net.Addr { return l.listener.Addr() }
 
-func (l *compatListener) close() { _ = l.Close() }
-
-func makeSocketFile(portText, guidText string) (SocketFile, error) {
+func makeSocketFile(portText, guidText string) (socketFile, error) {
 	port, err := strconv.ParseUint(portText, 10, 16)
 	if err != nil || port == 0 {
-		return SocketFile{}, fmt.Errorf("invalid compatibility socket port %q", portText)
+		return socketFile{}, fmt.Errorf("invalid compatibility socket port %q", portText)
 	}
 	guidBytes, err := parseGUID(guidText)
 	if err != nil {
-		return SocketFile{}, err
+		return socketFile{}, err
 	}
-	return SocketFile{Mode: transport.Cygwin, Port: uint16(port), GUIDData: guidBytes}, nil
+	return socketFile{Port: uint16(port), GUIDData: guidBytes}, nil
 }
 
 func parseGUID(value string) ([16]byte, error) {
@@ -239,14 +276,12 @@ func parseGUID(value string) ([16]byte, error) {
 	return result, nil
 }
 
-func randomGUIDData() ([16]byte, error) {
+func randomGUIDData() [16]byte {
 	var data [16]byte
-	if _, err := rand.Read(data[:]); err != nil {
-		return data, fmt.Errorf("generate compatibility socket GUID: %w", err)
-	}
+	_, _ = rand.Read(data[:])
 	data[6] = (data[6] & 0x0f) | 0x40
 	data[8] = (data[8] & 0x3f) | 0x80
-	return data, nil
+	return data
 }
 
 func formatGUID(data [16]byte) string {
@@ -263,7 +298,11 @@ func trimSocketFile(contents []byte) []byte {
 }
 
 func cygwinClientHandshake(ctx context.Context, conn net.Conn, guid [16]byte) error {
-	setContextDeadline(ctx, conn)
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			return err
+		}
+	}
 	if err := writeAll(conn, guid[:]); err != nil {
 		return fmt.Errorf("write Cygwin socket handshake: %w", err)
 	}
@@ -272,7 +311,7 @@ func cygwinClientHandshake(ctx context.Context, conn net.Conn, guid [16]byte) er
 		return fmt.Errorf("read Cygwin socket handshake: %w", err)
 	}
 	if challenge != guid {
-		return fmt.Errorf("Cygwin socket handshake GUID did not match")
+		return fmt.Errorf("cygwin socket handshake GUID did not match")
 	}
 	var clientInfo [12]byte
 	binary.LittleEndian.PutUint32(clientInfo[:4], uint32(os.Getpid()))
@@ -293,7 +332,7 @@ func cygwinServerHandshake(conn net.Conn, guid [16]byte) error {
 		return fmt.Errorf("read Cygwin socket handshake: %w", err)
 	}
 	if challenge != guid {
-		return fmt.Errorf("Cygwin socket handshake GUID did not match")
+		return fmt.Errorf("cygwin socket handshake GUID did not match")
 	}
 	if err := writeAll(conn, guid[:]); err != nil {
 		return fmt.Errorf("write Cygwin socket handshake: %w", err)
@@ -315,22 +354,6 @@ func setSystemFileAttribute(path string) error {
 		return err
 	}
 	return windows.SetFileAttributes(pathPointer, windows.FILE_ATTRIBUTE_ARCHIVE|windows.FILE_ATTRIBUTE_SYSTEM)
-}
-
-func dialLoopbackTCP(ctx context.Context, port uint16, localAddress *net.TCPAddr) (net.Conn, error) {
-	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port)))
-	dialer := net.Dialer{LocalAddr: localAddress}
-	conn, err := dialer.DialContext(ctx, "tcp4", address)
-	if err != nil {
-		return nil, fmt.Errorf("connect to loopback socket: %w", err)
-	}
-	return conn, nil
-}
-
-func setContextDeadline(ctx context.Context, conn net.Conn) {
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	}
 }
 
 func writeAll(conn net.Conn, data []byte) error {

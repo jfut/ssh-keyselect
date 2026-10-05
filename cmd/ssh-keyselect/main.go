@@ -206,7 +206,7 @@ func executeSSH(options sshCommandOptions, stdout, stderr io.Writer) (exitCode i
 		}
 	}
 	// Reject self-connections before binding can create or replace the upstream endpoint.
-	if sameEndpoint(listenPath, cfg.Agent.Upstream) {
+	if transport.SameEndpoint(listenPath, cfg.Agent.Upstream) {
 		return cmdutil.ReportError(stderr, commandName, errors.New("listen and upstream endpoints must be different"))
 	}
 	ln, cleanup, err := listener.ListenWithMode(listenPath, cfg.Agent.ListenMode)
@@ -272,7 +272,7 @@ func executeSSH(options sshCommandOptions, stdout, stderr io.Writer) (exitCode i
 	runErr := command.Run()
 	sshRunning.Store(false)
 	cancelProxy()
-	if serveErr := <-serverDone; serveErr != nil && ctx.Err() == nil {
+	if serveErr := <-serverDone; serveErr != nil {
 		return cmdutil.ReportError(stderr, commandName, fmt.Errorf("SSH agent proxy stopped: %w", serveErr))
 	}
 	logger.Info("SSH agent proxy stopped")

@@ -65,12 +65,12 @@ func selectionDetails(requestContext SelectionContext) []selectionDetail {
 		if binding.IsForwarding {
 			kind = fmt.Sprintf("Forwarding hop %d", index+1)
 		}
-		keyDetails := strings.TrimSpace(identity.DisplayComment(binding.Algorithm) + " " + identity.DisplayComment(binding.Fingerprint))
+		keyDetails := strings.TrimSpace(identity.DisplayText(binding.Algorithm) + " " + identity.DisplayText(binding.Fingerprint))
 		detail := selectionDetail{label: kind, keyDetails: keyDetails}
 		if len(binding.KnownHosts) > 0 {
 			names := make([]string, len(binding.KnownHosts))
 			for i, name := range binding.KnownHosts {
-				names[i] = identity.DisplayComment(name)
+				names[i] = identity.DisplayText(name)
 			}
 			detail.knownHosts = strings.Join(names, ", ")
 		}

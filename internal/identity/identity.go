@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/jfut/ssh-keyselect/internal/sshwire"
+	"golang.org/x/crypto/ssh"
 )
 
 // Identity contains public information returned by an SSH agent. Blob is never a private key.
@@ -26,15 +27,16 @@ type Identity struct {
 
 // New derives display metadata from an SSH public-key blob and its agent comment.
 func New(blob, comment []byte) (Identity, error) {
-	algorithm, _, err := sshwire.ReadString(blob)
-	if err != nil || len(algorithm) == 0 {
+	// Validate the entire key before accepting metadata supplied by the upstream agent.
+	key, err := ssh.ParsePublicKey(blob)
+	if err != nil {
 		return Identity{}, errors.New("invalid SSH public-key blob")
 	}
 	return Identity{
 		Blob:        append([]byte(nil), blob...),
 		Comment:     string(comment),
 		Fingerprint: Fingerprint(blob),
-		Algorithm:   string(algorithm),
+		Algorithm:   key.Type(),
 	}, nil
 }
 
@@ -91,14 +93,14 @@ func DisplayBitSize(blob []byte, algorithm string) string {
 	return "—"
 }
 
-// DisplayComment replaces terminal and bidirectional controls with spaces before rendering public text.
-func DisplayComment(comment string) string {
-	comment = strings.ToValidUTF8(comment, "�")
+// DisplayText replaces terminal and bidirectional controls before rendering public metadata.
+func DisplayText(value string) string {
+	value = strings.ToValidUTF8(value, "�")
 	return strings.Map(func(r rune) rune {
 		// Bidi controls can disguise comments or reorder surrounding UI text without visible glyphs.
 		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
 			return ' '
 		}
 		return r
-	}, comment)
+	}, value)
 }

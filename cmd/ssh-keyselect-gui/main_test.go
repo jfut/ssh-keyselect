@@ -7,8 +7,10 @@ package main
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
+	"github.com/jfut/ssh-keyselect/internal/cmdutil"
 	"github.com/jfut/ssh-keyselect/internal/config"
 	"github.com/richardwilkes/unison"
 	"github.com/richardwilkes/unison/enums/role"
@@ -22,6 +24,28 @@ func TestGUIListenCanBeResolvedWithoutAnUpstreamAgent(t *testing.T) {
 	}
 	if path == "" || mode == "" {
 		t.Fatalf("resolved listener = path %q, mode %q; both should be set", path, mode)
+	}
+}
+
+func TestGUIDiagnosticsRetainOnlyABoundedTail(t *testing.T) {
+	var output bytes.Buffer
+	diagnostics := guiDiagnostics{output: &output}
+	logger := cmdutil.NewLogger(&diagnostics, "warn")
+	for i := range 10000 {
+		logger.Warn("request rejected", "request", i)
+	}
+	if got := output.String(); strings.Count(got, "request rejected") != 10000 || !strings.Contains(got, "request=9999") {
+		t.Fatal("running logs were not delivered immediately to stderr")
+	}
+	if got := diagnostics.String(); len(got) > 64*1024 || !strings.Contains(got, "request=9999") {
+		t.Fatalf("diagnostic buffer retained %d bytes or lost the latest failure", len(got))
+	}
+	oversized := strings.Repeat("x", 128*1024) + "latest error"
+	if n, err := diagnostics.Write([]byte(oversized)); err != nil || n != len(oversized) {
+		t.Fatalf("oversized diagnostic write = %d, %v", n, err)
+	}
+	if got := diagnostics.String(); len(got) > 64*1024 || !strings.HasSuffix(got, "latest error") {
+		t.Fatalf("oversized diagnostic write retained %d bytes or lost the tail", len(got))
 	}
 }
 

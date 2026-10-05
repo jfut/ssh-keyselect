@@ -128,18 +128,18 @@ func TestGUIEndpointPathSelectionAndExportCopy(t *testing.T) {
 	}
 
 	screen.Click(screen.PanelCenter(copyButton))
-	if got, want := unison.ClipboardGetText(), `export SSH_AUTH_SOCK="`+endpoint+`"`; got != want {
+	if got, want := unison.ClipboardGetText(), `export SSH_AUTH_SOCK='`+endpoint+`'`; got != want {
 		t.Fatalf("copy icon clipboard = %q, want %q", got, want)
 	}
 	screen.Click(screen.PanelCenter(upstreamCopyButton))
-	if got, want := unison.ClipboardGetText(), `export UPSTREAM_SSH_AUTH_SOCK="C:\Users\jun\.ssh\ssh-agent-keepass.sock"`; got != want {
+	if got, want := unison.ClipboardGetText(), `export UPSTREAM_SSH_AUTH_SOCK='C:\Users\jun\.ssh\ssh-agent-keepass.sock'`; got != want {
 		t.Fatalf("upstream copy icon clipboard = %q, want %q", got, want)
 	}
 	// Windows must copy its native displayed path even when the listener uses a shell-form endpoint internally.
 	const shellEndpoint = "/c/Users/jun/.ssh/ssh-keyselect-agent.sock"
-	wantExport := `export SSH_AUTH_SOCK="/c/Users/jun/.ssh/ssh-keyselect-agent.sock"`
+	wantExport := `export SSH_AUTH_SOCK='/c/Users/jun/.ssh/ssh-keyselect-agent.sock'`
 	if runtime.GOOS == "windows" {
-		wantExport = `export SSH_AUTH_SOCK="C:\Users\jun\.ssh\ssh-keyselect-agent.sock"`
+		wantExport = `export SSH_AUTH_SOCK='C:\Users\jun\.ssh\ssh-keyselect-agent.sock'`
 	}
 	screen.Do(func() { update(shellEndpoint, transport.Cygwin, nil) })
 	screen.Click(screen.PanelCenter(copyButton))

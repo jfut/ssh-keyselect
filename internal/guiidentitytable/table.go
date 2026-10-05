@@ -213,7 +213,7 @@ func (v *View) SetEntries(entries []Entry) {
 	rows := make([]*Row, 0, len(entries))
 	for _, entry := range entries {
 		id := entry.Identity
-		comment := identity.DisplayComment(id.Comment)
+		comment := identity.DisplayText(id.Comment)
 		if comment == "" {
 			comment = "(no comment)"
 		}
@@ -222,8 +222,8 @@ func (v *View) SetEntries(entries []Entry) {
 			id:          tid.MustNewTID('k'),
 			numbered:    v.numbered,
 			size:        identity.DisplayBitSize(id.Blob, id.Algorithm),
-			algorithm:   id.Algorithm,
-			fingerprint: id.Fingerprint,
+			algorithm:   identity.DisplayText(id.Algorithm),
+			fingerprint: identity.DisplayText(id.Fingerprint),
 			comment:     comment,
 		}
 		if v.numbered {

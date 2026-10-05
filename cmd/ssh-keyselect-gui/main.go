@@ -18,19 +18,34 @@ var version = "dev"
 
 var commit = "none"
 
-// lockedBuffer collects startup diagnostics safely while the GUI serves requests.
-type lockedBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
+// guiDiagnostics forwards running logs and retains a bounded tail for startup error dialogs.
+type guiDiagnostics struct {
+	mu     sync.Mutex
+	buf    bytes.Buffer
+	output io.Writer
 }
 
-func (b *lockedBuffer) Write(data []byte) (int, error) {
+const guiDiagnosticLimit = 64 * 1024
+
+func (b *guiDiagnostics) Write(data []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.buf.Write(data)
+	n := len(data)
+	original := data
+	if len(data) >= guiDiagnosticLimit {
+		b.buf.Reset()
+		data = data[len(data)-guiDiagnosticLimit:]
+	} else if discard := b.buf.Len() + len(data) - guiDiagnosticLimit; discard > 0 {
+		b.buf.Next(discard)
+	}
+	_, _ = b.buf.Write(data)
+	if b.output != nil {
+		return b.output.Write(original)
+	}
+	return n, nil
 }
 
-func (b *lockedBuffer) String() string {
+func (b *guiDiagnostics) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
@@ -56,7 +71,7 @@ func execute(args []string, stdout, stderr io.Writer) int {
 
 // executeGUIDesktop reports startup failures while keeping the GUI attached to its launcher.
 func executeGUIDesktop(args []string, stdout, stderr io.Writer) int {
-	var diagnostics lockedBuffer
+	diagnostics := guiDiagnostics{output: stderr}
 	code := executeGUI(args, stdout, &diagnostics)
 	if code != 0 {
 		message := strings.TrimSpace(diagnostics.String())
@@ -64,9 +79,6 @@ func executeGUIDesktop(args []string, stdout, stderr io.Writer) int {
 			message = "The GUI agent could not start."
 		}
 		showStartupError(message)
-	}
-	if stderr != nil {
-		_, _ = io.WriteString(stderr, diagnostics.String())
 	}
 	return code
 }

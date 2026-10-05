@@ -4,6 +4,7 @@
 package selector
 
 import (
+	"errors"
 	"io"
 	"sync"
 )
@@ -16,18 +17,33 @@ type terminalSession struct {
 	// echoInput prints a completed line when the inherited stream has no live echo.
 	echoInput bool
 	// liveEcho enables the key-by-key picker when the terminal provides raw input.
-	liveEcho bool
-	close    func() error
+	liveEcho      bool
+	stopInput     func() error
+	inputStopOnce sync.Once
+	inputStopErr  error
+	close         func() error
 	// closeOnce is only used by Close in this file.
 	closeOnce sync.Once
 	// closeErr is only read by Close in this file.
 	closeErr error
 }
 
+// StopInput interrupts pending reads while leaving output and terminal modes
+// available until the picker has finished writing its final line.
+func (s *terminalSession) StopInput() error {
+	s.inputStopOnce.Do(func() {
+		if s.stopInput != nil {
+			s.inputStopErr = s.stopInput()
+		}
+	})
+	return s.inputStopErr
+}
+
 func (s *terminalSession) Close() error {
 	s.closeOnce.Do(func() {
+		s.closeErr = s.StopInput()
 		if s.close != nil {
-			s.closeErr = s.close()
+			s.closeErr = errors.Join(s.closeErr, s.close())
 		}
 	})
 	return s.closeErr

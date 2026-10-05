@@ -361,9 +361,9 @@ func guiAddConnectionModeRow(card *unison.Panel, markerInk, modeFill, modeInk un
 			pathField.Tooltip = unison.NewTooltipWithText(displayPath)
 			copyButton.SetEnabled(true)
 			copyButton.ClickCallback = func() {
-				// Copy the displayed path without extra escapes, using native Windows separators for clipboard text.
+				// Quote the native path for POSIX shells, including Git Bash and Cygwin.
 				path := guiEndpointPathFromDisplay(pathField.Text())
-				unison.ClipboardSetText(fmt.Sprintf("export %s=\"%s\"", endpointName, path))
+				unison.ClipboardSetText(guiEndpointExportCommand(endpointName, path))
 			}
 		}
 		pathField.SetSelectionToStart()
@@ -381,6 +381,11 @@ func guiAddConnectionModeRow(card *unison.Panel, markerInk, modeFill, modeInk un
 	}
 	update(endpoint, effective, modeErr)
 	return update
+}
+
+// guiEndpointExportCommand preserves shell metacharacters as literal endpoint text.
+func guiEndpointExportCommand(name, path string) string {
+	return "export " + name + "='" + strings.ReplaceAll(path, "'", "'\"'\"'") + "'"
 }
 
 func guiMaxModeBadgeWidth() float32 {

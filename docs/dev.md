@@ -115,9 +115,19 @@ Every upstream agent implementation supports opening a session. Identity-list an
 
 ### Display text sanitization
 
-`internal/identity.DisplayComment` replaces invalid UTF-8 with U+FFFD and maps Unicode control characters and characters with the [Bidi_Control property](https://www.unicode.org/Public/UCD/latest/ucd/PropList.txt) to ASCII spaces. This prevents agent comments and local host hints from injecting terminal controls or explicit text-direction changes into surrounding UI text. Ordinary multilingual text, combining marks, and joining characters retain their spelling and glyph shaping.
+Upstream identity parsing validates the complete public-key blob with `ssh.ParsePublicKey`, including the algorithm, key fields, and trailing data, before deriving display metadata. Unsupported or malformed keys reject the identity response. Parsing errors do not echo untrusted algorithm text.
 
-CLI identity tables, terminal picker rows, shared GUI key rows and their clipboard text, and both pickers' `known_hosts` hints use this sanitizer. Sanitization applies to display strings; the identity retains the original agent comment for protocol responses.
+`internal/identity.DisplayText` replaces invalid UTF-8 with U+FFFD and maps Unicode control characters and characters with the [Bidi_Control property](https://www.unicode.org/Public/UCD/latest/ucd/PropList.txt) to ASCII spaces. This prevents public key metadata and local host hints from injecting terminal controls or explicit text-direction changes into surrounding UI text. Ordinary multilingual text, combining marks, and joining characters retain their spelling and glyph shaping.
+
+CLI identity tables, terminal picker rows, shared GUI key rows and their clipboard text, and both pickers' `known_hosts` hints use this sanitizer for comments, algorithms, and fingerprints. Sanitization applies to display strings; the identity retains the original agent comment for protocol responses. CLI and TUI tables cap comment columns at 36 characters, algorithm columns at 64, and fingerprint columns at 50. Truncation scans only to the column boundary and appends an ellipsis, preventing a single long comment from expanding every row's padding.
+
+GUI endpoint export commands use POSIX single-quote escaping, including embedded apostrophes. Paths containing command substitutions, variable references, backticks, or backslashes remain literal when pasted into a POSIX shell.
+
+### Terminal input lifecycle
+
+The terminal picker serializes prompts and interrupts and joins each pending byte or line read before releasing its selection slot. This also applies to the speculative read used to distinguish Escape from a cursor-key sequence. A standalone Escape stops input while keeping output and terminal modes available for the final newline; full session cleanup follows before the selection slot is released. Unix terminals use nonblocking file descriptors and expire the read deadline to interrupt input through Go's poller without closing the shared output descriptor.
+
+Windows input reads run on a dedicated OS thread. Closing the session marks it stopped, cancels synchronous reads with `CancelSynchronousIo` and overlapped reads with `CancelIoEx`, and waits for the reader to exit before restoring console modes. Cancellation retries cover the interval immediately before a read starts. The worker's thread handle is protected until shutdown finishes, preventing cancellation from affecting a reused runtime thread. Git Bash/Cygwin inherited stdin remains open for later prompts and the SSH process.
 
 ### Frontend resource limits
 
@@ -133,6 +143,8 @@ Every reader exit cancels the connection context and closes the frontend socket 
 
 Unix listener cleanup unlinks only the socket it created, after checking filesystem identity. Automatic unlinking on listener close is disabled so a replacement at the same path remains untouched.
 
+Unix TUI endpoints use `XDG_RUNTIME_DIR/ssh-keyselect` when configured, or `os.TempDir()/ssh-keyselect-<effective UID>` otherwise. The XDG directory and the private directory must belong to the effective UID. The private directory is opened without following a symlink; ownership is checked before permissions are set to `0700` through the directory descriptor. This separates users in a shared temporary directory and avoids changing another user's directory permissions.
+
 ### Windows endpoint implementation
 
 The `cygwin` transport reads the socket file's endpoint information and connects through loopback TCP using the file's GUID handshake. The `wsl1` transport uses Windows AF_UNIX sockets with paths translated from `/mnt/<drive>/...`. The `named-pipe` mode uses Windows OpenSSH named pipes. Native Windows and shell-specific defaults are implemented in platform-suffixed files under `internal/listener`, `internal/upstream`, `internal/winpath`, and `cmd/ssh-keyselect-gui`.
@@ -143,9 +155,13 @@ The CLI and GUI use the same endpoint comparison before binding. On Windows, nat
 
 The GUI stores and displays paths in platform-specific formats. On Windows, dialog paths are converted to or from the selected transport when opening or saving configuration. A Listen mode change closes and reopens the listener, attempting to restore the previous listener if rebinding fails.
 
+Configuration application runs on a worker that serializes listener shutdown and restart. Completion updates configuration and widgets on the UI thread only after successful application. Configuration actions are disabled while application is pending. The event loop stays available to finish cancelled picker tasks while server handlers drain. The exit callback stops the selector first, cancels the application context, and waits for server shutdown and owned socket cleanup before returning. Stopping the selector releases its waiters without further UI tasks, so shutdown can finish inside the callback. Desktop `unison.Start` does not return.
+
 At GUI startup, an existing filesystem entry at the resolved Listen path leaves the proxy unconfigured. The preflight check prevents the listener from removing or replacing an existing socket file.
 
 ### GUI rendering and memory
+
+Enabled GUI logs are forwarded to stderr as they are written. Startup diagnostics retain only the latest 64 KiB, including when an individual write exceeds that limit, for the startup error dialog. Ongoing logging does not grow the diagnostic buffer or replay all logs at exit.
 
 GUI startup defaults `UNISON_CPU_RENDERING` to `1` before `unison.Start`. Unison then creates windows without OpenGL contexts and presents rasterized pixels through the platform's CPU drawing path. A small, mostly idle agent window benefits from avoiding driver initialization and GPU context allocations. An explicitly set environment variable takes precedence, including `UNISON_CPU_RENDERING=0` to request OpenGL.
 
@@ -188,6 +204,8 @@ Frontend connection-limit tests pass a cap of four connections to the shared ser
 Frontend timeout tests pass a 200 ms frame deadline to the shared serving and connection-handling implementation, so they exercise cancellation and socket cleanup without waiting for the production `Serve` deadline of 10 seconds. Each test supplies its own limits; no global limits are changed.
 
 Signing approval tests pass a 200 ms upstream setup deadline and withhold approval for 300 ms. This checks that signing waits can exceed the setup deadline, for both bound and unbound sessions, without waiting for the production 10-second deadline. The tests use real transport connections and also verify cancellation when the client disconnects.
+
+GUI settings and shutdown tests run the headless event loop with a real upstream agent and frontend connections. They apply settings while one picker is modal and another client waits, then check picker closure, old-client disconnection, and listener availability after both same-path and changed-path restarts. Quitting with pending picker requests must remove the owned socket before the exit callback returns and allow a new runtime to bind the same endpoint. Linux terminal tests use a real pseudoterminal to check context cancellation, the final newline after Escape, and input handoff to the next reader. Windows terminal tests cover both blocking inherited pipes and Go's overlapped pipes, checking that later input survives cancellation. The Unix foreign-directory permission test requires root and otherwise skips; it changes only a temporary fixture's owner.
 
 Run `just deps-credits` after changing Go dependencies or the supported target operating systems. It installs a pinned `go-licenses` into a temporary directory, scans Linux, macOS, and Windows builds with the GUI tag, and regenerates `internal/credits/dependencies.txt` and `CREDITS`. The scanner is used because it can report GUI-tagged and platform-specific imports in each build. Check the output for newly introduced or changed licenses. The generated `CREDITS` includes third-party license texts and the licenses for fonts embedded by Unison.
 

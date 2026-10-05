@@ -20,9 +20,6 @@ func FormatIdentityTable(identities []identity.Identity) string {
 	}
 
 	noWidth, commentWidth, typeWidth, sizeWidth, fingerprintWidth := identityColumnWidths(options, 0)
-	for _, option := range options {
-		commentWidth = max(commentWidth, utf8.RuneCountInString(option.comment))
-	}
 
 	var table strings.Builder
 	writeRow := func(number, comment, keyType, size, fingerprint string) {

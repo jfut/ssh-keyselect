@@ -37,14 +37,14 @@ type identityMatch struct {
 func makeIdentityOptions(identities []identity.Identity) []identityOption {
 	options := make([]identityOption, 0, len(identities))
 	for index, id := range identities {
-		comment := identity.DisplayComment(id.Comment)
+		comment := identity.DisplayText(id.Comment)
 		if comment == "" {
 			comment = "(no comment)"
 		}
 		size := identity.DisplayBitSize(id.Blob, id.Algorithm)
 		options = append(options, identityOption{
-			index: index, identity: id, comment: comment, algorithm: id.Algorithm,
-			size: size, fingerprint: id.Fingerprint,
+			index: index, identity: id, comment: comment, algorithm: identity.DisplayText(id.Algorithm),
+			size: size, fingerprint: identity.DisplayText(id.Fingerprint),
 		})
 	}
 	return options
@@ -117,6 +117,8 @@ func identityColumnWidths(options []identityOption, terminalWidth int) (no, comm
 		fingerprint = max(fingerprint, utf8.RuneCountInString(option.fingerprint))
 	}
 	comment = min(comment, 36)
+	keyType = min(keyType, 64)
+	fingerprint = min(fingerprint, 50)
 	size = max(size, 4)
 	fullWidth := no + comment + keyType + size + fingerprint + 16
 	if terminalWidth <= 0 || fullWidth <= terminalWidth {
@@ -133,12 +135,14 @@ func fitIdentityCell(value string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	runes := []rune(value)
-	if len(runes) <= width {
-		return value
+	// Scan only to the column boundary instead of allocating a rune slice for a large comment.
+	count, end := 0, 0
+	for offset := range value {
+		if count == width {
+			return value[:end] + "…"
+		}
+		end = offset
+		count++
 	}
-	if width == 1 {
-		return "…"
-	}
-	return string(runes[:width-1]) + "…"
+	return value
 }

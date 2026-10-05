@@ -61,7 +61,7 @@ func (s *TUISelector) Select(ctx context.Context, identities []identity.Identity
 }
 
 func tuiEchoInputLine(writer io.Writer, line string) error {
-	_, err := io.WriteString(writer, identity.DisplayComment(line)+"\r\n")
+	_, err := io.WriteString(writer, identity.DisplayText(line)+"\r\n")
 	return err
 }
 
@@ -93,14 +93,16 @@ type tuiTerminalKey struct {
 	err   error
 }
 
-func tuiReadTerminalByte(ctx context.Context, reader tuiByteReader) (byte, error) {
+func tuiReadTerminalByte(ctx context.Context, terminal *terminalSession) (byte, error) {
 	result := make(chan tuiTerminalKey, 1)
 	go func() {
-		value, err := reader.ReadByte()
+		value, err := (tuiSingleByteReader{reader: terminal.reader}).ReadByte()
 		result <- tuiTerminalKey{value: value, err: err}
 	}()
 	select {
 	case <-ctx.Done():
+		_ = terminal.Close()
+		<-result
 		return 0, ctx.Err()
 	case key := <-result:
 		return key.value, key.err
@@ -108,7 +110,6 @@ func tuiReadTerminalByte(ctx context.Context, reader tuiByteReader) (byte, error
 }
 
 func (s *TUISelector) selectLive(ctx context.Context, terminal *terminalSession, options []identityOption, requestContext SelectionContext, shownAt time.Time) ([]identity.Identity, error) {
-	reader := tuiSingleByteReader{reader: terminal.reader}
 	query := ""
 	pendingUTF8 := make([]byte, 0, utf8.UTFMax)
 	matches := matchIdentities(options, query)
@@ -132,7 +133,7 @@ func (s *TUISelector) selectLive(ctx context.Context, terminal *terminalSession,
 	}
 
 	for {
-		value, err := tuiReadTerminalByte(ctx, reader)
+		value, err := tuiReadTerminalByte(ctx, terminal)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -156,7 +157,7 @@ func (s *TUISelector) selectLive(ctx context.Context, terminal *terminalSession,
 			_, _ = io.WriteString(terminal.writer, "^C\r\n")
 			return nil, ErrCancelled
 		case '\x1b':
-			key, isArrow, err := tuiReadEscapeKey(ctx, reader)
+			key, isArrow, err := tuiReadEscapeKey(ctx, terminal)
 			if err != nil {
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
@@ -219,10 +220,10 @@ func (s *TUISelector) selectLive(ctx context.Context, terminal *terminalSession,
 }
 
 // tuiReadEscapeKey distinguishes a standalone Escape press from the terminal's cursor-key sequence.
-func tuiReadEscapeKey(ctx context.Context, reader tuiByteReader) (byte, bool, error) {
+func tuiReadEscapeKey(ctx context.Context, terminal *terminalSession) (byte, bool, error) {
 	result := make(chan tuiTerminalKey, 1)
 	go func() {
-		value, err := reader.ReadByte()
+		value, err := (tuiSingleByteReader{reader: terminal.reader}).ReadByte()
 		result <- tuiTerminalKey{value: value, err: err}
 	}()
 	timer := time.NewTimer(40 * time.Millisecond)
@@ -230,8 +231,13 @@ func tuiReadEscapeKey(ctx context.Context, reader tuiByteReader) (byte, bool, er
 	var key tuiTerminalKey
 	select {
 	case <-ctx.Done():
+		_ = terminal.Close()
+		<-result
 		return 0, false, ctx.Err()
 	case <-timer.C:
+		// Join the speculative read while keeping output open for the final newline.
+		_ = terminal.StopInput()
+		<-result
 		return 0, false, nil
 	case key = <-result:
 	}
@@ -242,7 +248,7 @@ func tuiReadEscapeKey(ctx context.Context, reader tuiByteReader) (byte, bool, er
 		return 0, false, nil
 	}
 	for {
-		value, err := tuiReadTerminalByte(ctx, reader)
+		value, err := tuiReadTerminalByte(ctx, terminal)
 		if err != nil {
 			return 0, false, err
 		}
@@ -268,6 +274,9 @@ func (s *TUISelector) selectLineBuffered(ctx context.Context, terminal *terminal
 		}()
 		select {
 		case <-ctx.Done():
+			// Interrupt and join the line reader before another prompt can consume stdin.
+			_ = terminal.Close()
+			<-lineCh
 			return nil, ctx.Err()
 		case result := <-lineCh:
 			skipLF = result.skipLF

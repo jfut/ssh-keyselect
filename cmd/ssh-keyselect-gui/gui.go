@@ -226,6 +226,9 @@ func serveWithGUI(
 				}
 			}
 			window.AllowCloseCallback = func() bool {
+				if configState != nil && configState.applying && ctx.Err() == nil {
+					return false
+				}
 				if configState == nil || !configState.dirty {
 					return true
 				}
@@ -425,6 +428,9 @@ func serveWithGUI(
 			refresh.ClickCallback = refreshIdentities
 
 			openSettings := func() {
+				if configState.applying {
+					return
+				}
 				next, ok, editErr := editGUIEndpointSettings(configState.cfg)
 				if editErr != nil {
 					showGUIErrorDialog("Could not open settings.", editErr)
@@ -434,9 +440,11 @@ func serveWithGUI(
 					return
 				}
 				dirty := configState.dirty || next != configState.cfg
-				if err := configState.apply(next, dirty); err != nil {
-					showGUIErrorDialog("Could not apply settings.", err)
-				}
+				configState.apply(next, dirty, func(err error) {
+					if err != nil {
+						showGUIErrorDialog("Could not apply settings.", err)
+					}
+				})
 			}
 			settingsButton.ClickCallback = openSettings
 			configState = &guiConfigState{
@@ -456,6 +464,7 @@ func serveWithGUI(
 				finishIdentityLayout()
 			}
 			configState.runtime = runtimeState
+			configState.onApplyingChange = func() { settingsButton.SetEnabled(!configState.applying) }
 			updateConnectionRows := func() {
 				endpoint, _ := endpointAgent.Snapshot()
 				var effectiveUpstreamMode transport.Mode
@@ -476,7 +485,8 @@ func serveWithGUI(
 			updateConnectionRows()
 
 			installGUIFileMenu(window, guiFileMenuActions{
-				open: configState.open, save: configState.saveFromMenu, saveAs: configState.saveAs, settings: openSettings,
+				enabled: func() bool { return !configState.applying },
+				open:    configState.open, save: configState.saveFromMenu, saveAs: configState.saveAs, settings: openSettings,
 			})
 			window.SetContentRect(geom.NewRect(100, 100, 1080, 510))
 			guiwindow.CenterOnPrimaryDisplay(window)
@@ -521,11 +531,8 @@ func serveWithGUI(
 			}
 
 			// Register the icon even when another instance already owns the proxy endpoint.
-			var trayErr, proxyErr error
-			cleanupTray, trayErr, proxyErr = startGUIComponents(startTray, func() error {
-				_, _, applyErr := configState.runtime.Apply(cfg)
-				return applyErr
-			})
+			var trayErr error
+			cleanupTray, trayErr = startTray()
 			if trayErr != nil {
 				logger.Error("create system tray icon", "error", trayErr)
 				statusTitleSuffix = " - tray icon unavailable"
@@ -534,24 +541,18 @@ func serveWithGUI(
 				keysStatus.Tooltip = unison.NewTooltipWithText(trayErr.Error())
 				keysStatus.MarkForLayoutAndRedraw()
 			}
-			if proxyErr != nil {
-				logger.Error("listen on agent endpoint", "error", proxyErr)
-				keysStatus.SetTitle("Agent proxy could not start")
-				keysStatus.Tooltip = unison.NewTooltipWithText(proxyErr.Error())
-				refresh.SetEnabled(false)
-				finishIdentityLayout()
-				return
-			}
-			configState.actualListen = runtimeState.listenPath
-			configState.effectiveListenMode = runtimeState.listenMode
-			configState.onUpdate()
+			configState.apply(cfg, false, func(applyErr error) {
+				if applyErr != nil {
+					logger.Error("listen on agent endpoint", "error", applyErr)
+					keysStatus.SetTitle("Agent proxy could not start")
+					keysStatus.Tooltip = unison.NewTooltipWithText(applyErr.Error())
+					refresh.SetEnabled(false)
+					finishIdentityLayout()
+				}
+			})
 		}),
 		unison.QuittingCallback(func() {
-			guiSelector.Stop()
-			stop()
-			if runtimeState != nil {
-				runtimeState.Close()
-			}
+			guiShutdownProxy(guiSelector, stop, runtimeState)
 			if cleanupTray != nil {
 				if err := cleanupTray(); err != nil {
 					logger.Error("remove system tray icon", "error", err)
@@ -559,4 +560,14 @@ func serveWithGUI(
 			}
 		}),
 	)
+}
+
+// guiShutdownProxy must finish in the quit callback because desktop Unison.Start
+// never returns. Stop the picker first so handlers can drain without UI tasks.
+func guiShutdownProxy(guiSelector *selector.GUISelector, stop context.CancelFunc, runtimeState *guiRuntime) {
+	guiSelector.Stop()
+	stop()
+	if runtimeState != nil {
+		runtimeState.Close()
+	}
 }

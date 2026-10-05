@@ -206,6 +206,8 @@ The agent protocol does not provide a hostname. Names matched from the default l
 | `ssh-keyselect version`                                    | Print the version and commit.                          |
 | `ssh-keyselect --help` or `ssh-keyselect <command> --help` | Show commands and options.                             |
 
+Long comments in CLI tables are shortened with an ellipsis for display. The original comments remain available to SSH clients.
+
 ### Options and environment
 
 The wrapper options go before `--`; arguments after it are passed to OpenSSH.

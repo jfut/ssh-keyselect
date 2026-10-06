@@ -8,6 +8,7 @@ package selector
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -108,6 +109,8 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 		offered:        offered,
 		requestContext: requestContext, shownAt: shownAt, refresh: refresh,
 		selected: 0, focusFilter: true,
+		// The current target is the final entry in a multi-host path.
+		detailsScroll: ui.ScrollState{Y: math.MaxFloat32},
 	}
 	title := fmt.Sprintf("%s [%s - %s]", identitySelectionPrompt, branding.Name, selectionDisplayTime(shownAt))
 	window := mygo.NewWindow(mygo.WindowOptions{
@@ -239,6 +242,7 @@ type guiPickerState struct {
 	matchesQuery   string
 	matchesValid   bool
 	tableRows      []guitable.IdentityRow
+	detailsScroll  ui.ScrollState
 	tableState     ui.ListState
 	window         *mygo.Window
 	focusFilter    bool
@@ -251,7 +255,8 @@ func (p *guiPickerState) view(c *ui.Context) {
 		p.window.Close()
 	}
 	root.Children(func() {
-		ui.Scroll(c).Height(theme.Space(36)).Border(1, theme.Border).Radius(theme.Space(1)).Padding(theme.Space(1.5)).Children(func() {
+		ui.Scroll(c).Height(theme.Space(36)).TrackScroll(&p.detailsScroll).
+			Border(1, theme.Border).Radius(theme.Space(1)).Padding(theme.Space(1.5)).Children(func() {
 			ui.Text(c, guiSelectionDetailsText(p.requestContext, p.shownAt)).FontSize(theme.Rem(0.82)).
 				Selectable()
 		})

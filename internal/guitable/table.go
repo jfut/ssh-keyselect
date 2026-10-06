@@ -8,6 +8,7 @@ package guitable
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/jfut/ssh-keyselect/internal/identity"
@@ -85,6 +86,20 @@ func IdentityTable(c *ui.Context, state *ui.ListState, rows []IdentityRow, numbe
 	// MyGo's table headers inherit the table font size. Cells set their own
 	// compact size, so reducing the table size affects only the headers.
 	return table.FontSize(theme.Rem(1) - 1)
+}
+
+// IdentityCopyText formats the visible identity fields for the table's clipboard action.
+func IdentityCopyText(id identity.Identity) string {
+	comment := identity.DisplayText(id.Comment)
+	if comment == "" {
+		comment = "(no comment)"
+	}
+	return strings.Join([]string{
+		comment,
+		identity.DisplayText(id.Algorithm),
+		identity.DisplayBitSize(id.Blob, id.Algorithm),
+		identity.DisplayText(id.Fingerprint),
+	}, "\t")
 }
 
 // identityColumns returns the shared layout, optionally prefixed with its row number.

@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,17 +18,26 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const maxSessionBindings = 16
+const (
+	maxSessionBindings     = 16
+	maxSessionBindingBytes = 1024 * 1024
+	maxKnownHostsScanBytes = 1024 * 1024
+	maxKnownHostsLineSize  = 64 * 1024
+)
 
 // verifiedSessionBind carries only the parsed binding data used to authorize a session.
 type verifiedSessionBind struct {
 	sessionID []byte
 	raw       []byte
 	display   selector.HostBinding
+	// hostKey is kept only until the optional known_hosts display hint is resolved.
+	hostKey ssh.PublicKey
 }
 
 // verifySessionBind accepts only host keys that verify their session identifier signature.
 func verifySessionBind(message []byte) (verifiedSessionBind, error) {
+	// Keep one owned frame for both replay and the session-ID view used for duplicate checks.
+	message = bytes.Clone(message)
 	extension, err := protocol.ParseExtensionRequest(message)
 	if err != nil {
 		return verifiedSessionBind{}, err
@@ -51,12 +61,12 @@ func verifySessionBind(message []byte) (verifiedSessionBind, error) {
 		return verifiedSessionBind{}, errors.New("session-bind host key signature did not verify")
 	}
 	return verifiedSessionBind{
-		sessionID: append([]byte(nil), request.SessionID...),
-		raw:       append([]byte(nil), message...),
+		sessionID: request.SessionID,
+		raw:       message,
+		hostKey:   hostKey,
 		display: selector.HostBinding{
 			Algorithm:    hostKey.Type(),
 			Fingerprint:  ssh.FingerprintSHA256(hostKey),
-			KnownHosts:   sessionKnownHostNames(hostKey),
 			IsForwarding: request.IsForwarding,
 		},
 	}, nil
@@ -86,8 +96,8 @@ func sessionKnownHostNames(hostKey ssh.PublicKey) []string {
 		if err != nil {
 			continue
 		}
-		scanner := bufio.NewScanner(file)
-		scanner.Buffer(make([]byte, 4096), 1024*1024)
+		scanner := bufio.NewScanner(io.LimitReader(file, maxKnownHostsScanBytes))
+		scanner.Buffer(make([]byte, 4096), maxKnownHostsLineSize)
 		for scanner.Scan() {
 			line := bytes.TrimSpace(scanner.Bytes())
 			if len(line) == 0 || line[0] == '#' {

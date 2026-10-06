@@ -14,9 +14,15 @@ var (
 	pickerUser32              = windows.NewLazySystemDLL("user32.dll")
 	pickerAttachThreadInput   = pickerUser32.NewProc("AttachThreadInput")
 	pickerBringWindowToTop    = pickerUser32.NewProc("BringWindowToTop")
+	pickerIsWindow            = pickerUser32.NewProc("IsWindow")
 	pickerSetForegroundWindow = pickerUser32.NewProc("SetForegroundWindow")
 	pickerSetFocus            = pickerUser32.NewProc("SetFocus")
 )
+
+// capturePickerReturnWindow remembers the foreground app that opened the picker.
+func capturePickerReturnWindow() uintptr {
+	return uintptr(windows.GetForegroundWindow())
+}
 
 // acquirePickerNativeFocus bridges Windows foreground restrictions before focusing a MyGo picker window.
 func acquirePickerNativeFocus(window *mygo.Window) {
@@ -42,6 +48,31 @@ func acquirePickerNativeFocus(window *mygo.Window) {
 
 	// MyGo's Window.Focus calls SetForegroundWindow directly. Temporarily sharing the foreground input queue lets the
 	// signature-request dialog take focus when an SSH terminal owns the foreground, as the earlier UI did on Windows.
+	pickerBringWindowToTop.Call(hwnd)
+	pickerSetForegroundWindow.Call(hwnd)
+	pickerSetFocus.Call(hwnd)
+}
+
+// restorePickerReturnWindow returns keyboard focus to the app that requested a key selection.
+func restorePickerReturnWindow(hwnd uintptr) {
+	if hwnd == 0 {
+		return
+	}
+	if result, _, _ := pickerIsWindow.Call(hwnd); result == 0 {
+		return
+	}
+
+	ourThread := windows.GetCurrentThreadId()
+	returnThread, _ := windows.GetWindowThreadProcessId(windows.HWND(hwnd), nil)
+	attached := returnThread != 0 && returnThread != ourThread
+	if attached {
+		result, _, _ := pickerAttachThreadInput.Call(uintptr(ourThread), uintptr(returnThread), 1)
+		attached = result != 0
+	}
+	if attached {
+		defer pickerAttachThreadInput.Call(uintptr(ourThread), uintptr(returnThread), 0)
+	}
+
 	pickerBringWindowToTop.Call(hwnd)
 	pickerSetForegroundWindow.Call(hwnd)
 	pickerSetFocus.Call(hwnd)

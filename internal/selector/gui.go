@@ -102,9 +102,10 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 		parent = parentProvider()
 	}
 	shownAt := time.Now()
+	offered := append([]identity.Identity(nil), identities...)
 	picker := &guiPickerState{
-		ctx: ctx, identities: append([]identity.Identity(nil), identities...),
-		offered:        append([]identity.Identity(nil), identities...),
+		ctx: ctx, identities: offered,
+		offered:        offered,
 		requestContext: requestContext, shownAt: shownAt, refresh: refresh,
 		selected: 0, focusFilter: true,
 	}
@@ -232,6 +233,12 @@ type guiPickerState struct {
 	refreshing     bool
 	hasSelection   bool
 	chosen         identity.Identity
+	searchOptions  []identityOption
+	optionsValid   bool
+	matchesCache   []identityMatch
+	matchesQuery   string
+	matchesValid   bool
+	tableRows      []guitable.IdentityRow
 	tableState     ui.ListState
 	window         *mygo.Window
 	focusFilter    bool
@@ -266,21 +273,17 @@ func (p *guiPickerState) view(c *ui.Context) {
 				})
 			} else {
 				p.tableState.Selected = &p.selected
-				tableRows := make([]guitable.IdentityRow, len(matches))
-				for i, match := range matches {
-					tableRows[i] = guitable.IdentityRow{Identity: match.identity, Number: match.index + 1}
-				}
-				table := guitable.IdentityTable(c, &p.tableState, tableRows, true, false).
+				table := guitable.IdentityTable(c, &p.tableState, p.tableRows, true, false).
 					Grow(1).MinHeight(theme.Space(37))
 				table.ContextMenu(func(menu *ui.Menu) {
 					copyItem := menu.Item("Copy").Disabled(p.selected < 0 || p.selected >= len(matches)).
 						Shortcut(ui.Cmd, ui.KeyC)
 					if copyItem.Chosen() && p.selected >= 0 && p.selected < len(matches) {
-						mygo.Clipboard.WriteText(guiPickerIdentityCopyText(matches[p.selected].identity))
+						mygo.Clipboard.WriteText(guitable.IdentityCopyText(matches[p.selected].identity))
 					}
 				})
 				if table.Shortcut(ui.Cmd, ui.KeyC) && p.selected >= 0 && p.selected < len(matches) {
-					mygo.Clipboard.WriteText(guiPickerIdentityCopyText(matches[p.selected].identity))
+					mygo.Clipboard.WriteText(guitable.IdentityCopyText(matches[p.selected].identity))
 				}
 				if table.Submitted() {
 					p.choose(matches)
@@ -318,7 +321,21 @@ func (p *guiPickerState) view(c *ui.Context) {
 }
 
 func (p *guiPickerState) matches() []identityMatch {
-	return matchIdentities(makeSearchableIdentityOptions(p.identities), p.query)
+	if !p.optionsValid {
+		p.searchOptions = makeSearchableIdentityOptions(p.identities)
+		p.optionsValid = true
+	}
+	if p.matchesValid && p.matchesQuery == p.query {
+		return p.matchesCache
+	}
+	p.matchesQuery = p.query
+	p.matchesCache = matchIdentities(p.searchOptions, p.query)
+	p.tableRows = make([]guitable.IdentityRow, len(p.matchesCache))
+	for i, match := range p.matchesCache {
+		p.tableRows[i] = guitable.IdentityRow{Identity: match.identity, Number: match.index + 1}
+	}
+	p.matchesValid = true
+	return p.matchesCache
 }
 
 func (p *guiPickerState) choose(matches []identityMatch) {
@@ -358,6 +375,12 @@ func (p *guiPickerState) refreshKeys() {
 				return
 			}
 			p.identities = guiAvailableIdentityMetadata(p.offered, updated)
+			p.searchOptions = nil
+			p.optionsValid = false
+			p.matchesCache = nil
+			p.matchesQuery = ""
+			p.matchesValid = false
+			p.tableRows = nil
 			p.selected = 0
 			if len(p.identities) == 0 {
 				p.selected = -1
@@ -383,19 +406,6 @@ func guiSelectionDetailsText(requestContext SelectionContext, shownAt time.Time)
 		}
 	}
 	return text.String()
-}
-
-func guiPickerIdentityCopyText(id identity.Identity) string {
-	comment := identity.DisplayText(id.Comment)
-	if comment == "" {
-		comment = "(no comment)"
-	}
-	return strings.Join([]string{
-		comment,
-		identity.DisplayText(id.Algorithm),
-		identity.DisplayBitSize(id.Blob, id.Algorithm),
-		identity.DisplayText(id.Fingerprint),
-	}, "\t")
 }
 
 // guiAvailableIdentityMetadata refreshes display data without selecting keys the SSH client did not offer.

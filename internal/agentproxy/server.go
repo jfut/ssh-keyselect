@@ -184,10 +184,12 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 	selected := make(map[[sha256.Size]byte]struct{})
 	var sessionBinds []verifiedSessionBind
 	var upstreamSessionBinds [][]byte
+	var sessionBindingBytes int
 	upstreamSessionBindingRejected := false
 	resetBindingChain := func() {
 		sessionBinds = nil
 		upstreamSessionBinds = nil
+		sessionBindingBytes = 0
 		upstreamSessionBindingRejected = false
 		cachedResponse = nil
 		clear(selected)
@@ -283,6 +285,13 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 					}
 					continue
 				}
+				if len(binding.raw) > maxSessionBindingBytes-sessionBindingBytes {
+					log.Warn("rejected excessive SSH session-binding data", "limit_bytes", maxSessionBindingBytes)
+					if !writeFailure(conn) {
+						return
+					}
+					continue
+				}
 				err = bindAgentSessionChain(ctx, s.Agent, upstreamSessionBinds, binding.raw, requestTimeout)
 				if err != nil {
 					upstreamSessionBindingRejected = true
@@ -292,8 +301,11 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 					}
 					continue
 				}
+				binding.display.KnownHosts = sessionKnownHostNames(binding.hostKey)
+				binding.hostKey = nil
 				upstreamSessionBinds = append(upstreamSessionBinds, binding.raw)
 				sessionBinds = append(sessionBinds, binding)
+				sessionBindingBytes += len(binding.raw)
 				if !writeResponse(conn, []byte{protocol.Success}) {
 					return
 				}

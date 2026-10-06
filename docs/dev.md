@@ -141,6 +141,8 @@ Clients should wait for each response before sending another request. The frame 
 
 Every reader exit cancels the connection context and closes the frontend socket to stop the picker and unblock response writes. Shutdown cancels pickers, closes frontend sockets, and waits for handlers and readers even when the listener fails.
 
+Each frontend connection accepts at most 16 session-binding requests and retains no more than 1 MiB of verified binding messages for its current chain. Starting a new forwarding chain clears the previous chain. The display-only `known_hosts` lookup reads at most 1 MiB from each file and stops scanning a file if a line exceeds 64 KiB.
+
 Unix listener cleanup unlinks only the socket it created, after checking filesystem identity. Automatic unlinking on listener close is disabled so a replacement at the same path remains untouched.
 
 Unix TUI endpoints use `XDG_RUNTIME_DIR/ssh-keyselect` when configured, or `os.TempDir()/ssh-keyselect-<effective UID>` otherwise. The XDG directory and the private directory must belong to the effective UID. The private directory is opened without following a symlink; ownership is checked before permissions are set to `0700` through the directory descriptor. This separates users in a shared temporary directory and avoids changing another user's directory permissions.
@@ -161,7 +163,7 @@ At GUI startup, an existing filesystem entry at the resolved Listen path leaves 
 
 ### GUI rendering and memory
 
-The GUI uses MyGo's Go-only `ui` package. Views rebuild from application state, and its virtualized tables create visible rows on demand. Native windows do not start a WebView or load HTML or JavaScript. MyGo draws the UI with Metal on macOS, Direct3D 11 on Windows, and OpenGL on Linux; native file dialogs, menus, clipboard access, and tray integration use MyGo's platform APIs. Linux needs GTK 3 at runtime, and its tray integration additionally needs `libayatana-appindicator3`.
+The GUI uses MyGo's Go-only `ui` package. Views rebuild from application state, and its virtualized tables create visible rows on demand. The main identity table reuses its sorted rows between state changes, and the picker reuses its searchable identities and matches between query changes. Native windows do not start a WebView or load HTML or JavaScript. MyGo draws the UI with Metal on macOS, Direct3D 11 on Windows, and OpenGL on Linux; native file dialogs, menus, clipboard access, and tray integration use MyGo's platform APIs. Linux needs GTK 3 at runtime, and its tray integration additionally needs `libayatana-appindicator3`.
 
 GUI logs use a stable writer so Settings can change the destination and level while the proxy is running. A configured file is appended with mode `0600`; missing parent directories are created with mode `0700`. An empty path uses stderr. Startup diagnostics retain only the latest 64 KiB, including when an individual write exceeds that limit, for the startup error message. Ongoing logging does not grow the diagnostic buffer or replay all logs at exit.
 
@@ -171,7 +173,7 @@ Compare separate processes with the same configuration, display scale, and windo
 
 `assets/ssh-keyselect-logo.png` is the source artwork. `just gen-platform-icons` creates the multi-size ICO, Linux desktop PNGs, and macOS ICNS under the ignored `assets/gui/generated/` directory. `just gen-windows-icons` also generates ignored Windows `.syso` resources under `assets/gui/generated/windows/`.
 
-Source artwork is decoded lazily once. Requested icon sizes are generated from the embedded image for the app, window, and tray icons.
+Source artwork is decoded lazily once. The application icon supplies the native default, while windows use a shared 32px image for sharp title-bar icons; the tray icon is generated at its requested size.
 
 Each Windows executable combines its icon and version information in one resource object because the Go linker accepts only one resource section per executable. `assets/gui/windows-cli-resources.json` and `assets/gui/windows-gui-resources.json` define the shared `SSH KeySelect` file description and product name, the project copyright notice, and each executable's original filename. Windows version resources use `go-winres`, pinned in `scripts/generate-windows-icons.sh` and `scripts/generate-windows-resource.sh`. GoReleaser's per-target hooks use the latter script to override both executables' file and product versions with `.Version`, then remove the temporary resource after each build. Local builds use `0.0.0.0`. The GUI's resource description also supplies its `SSH KeySelect` name in Task Manager.
 

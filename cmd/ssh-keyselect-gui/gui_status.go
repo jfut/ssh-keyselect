@@ -41,6 +41,7 @@ func guiMainWindowTitle(endpoint string, dirty bool) string {
 
 func (a *guiApp) start() {
 	a.uiStarted = true
+	// The application icon is also the default icon inherited by native windows.
 	icon, iconErr := guiassets.PNG(256)
 	if iconErr != nil {
 		a.logger.Warn("create application icon", "error", iconErr)
@@ -49,7 +50,7 @@ func (a *guiApp) start() {
 	}
 
 	a.createMainWindow()
-	trayIcon, err := guiassets.PNG(32)
+	trayIcon, err := guiassets.WindowIconPNG()
 	if err == nil {
 		a.tray, err = mygo.NewTray(mygo.TrayOptions{
 			Icon: trayIcon, ToolTip: branding.EndpointTitle(guiDisplayEndpointPath(a.actualListen)),
@@ -265,11 +266,11 @@ func (a *guiApp) identityCard(c *ui.Context, theme *ui.Theme) {
 			copyItem := menu.Item("Copy").Disabled(a.selectedIdentity < 0 || a.selectedIdentity >= len(rows)).
 				Shortcut(ui.Cmd, ui.KeyC)
 			if copyItem.Chosen() && a.selectedIdentity >= 0 && a.selectedIdentity < len(rows) {
-				mygo.Clipboard.WriteText(guiIdentityCopyText(rows[a.selectedIdentity].Identity))
+				mygo.Clipboard.WriteText(guitable.IdentityCopyText(rows[a.selectedIdentity].Identity))
 			}
 		})
 		if table.Shortcut(ui.Cmd, ui.KeyC) && a.selectedIdentity >= 0 && a.selectedIdentity < len(rows) {
-			mygo.Clipboard.WriteText(guiIdentityCopyText(rows[a.selectedIdentity].Identity))
+			mygo.Clipboard.WriteText(guitable.IdentityCopyText(rows[a.selectedIdentity].Identity))
 		}
 		if len(rows) == 0 && !a.loading && a.keyError == "" {
 			ui.Text(c, "No identities are available from the upstream agent.").TextColor(theme.TextMuted)
@@ -412,11 +413,17 @@ func guiCard(c *ui.Context) *ui.Element {
 }
 
 func (a *guiApp) sortedIdentities() []guitable.IdentityRow {
+	if a.identityRowsValid && a.identityRowsSort == a.identitySort {
+		return a.identityRowsCache
+	}
 	rows := make([]guitable.IdentityRow, len(a.identities))
 	for i, id := range a.identities {
 		rows[i] = guitable.IdentityRow{Identity: id, Number: i + 1}
 	}
 	if a.identitySort.Column == "" {
+		a.identityRowsCache = rows
+		a.identityRowsSort = a.identitySort
+		a.identityRowsValid = true
 		return rows
 	}
 	compare := func(left, right guitable.IdentityRow) int {
@@ -452,21 +459,10 @@ func (a *guiApp) sortedIdentities() []guitable.IdentityRow {
 		}
 		return order < 0
 	})
+	a.identityRowsCache = rows
+	a.identityRowsSort = a.identitySort
+	a.identityRowsValid = true
 	return rows
-}
-
-// guiIdentityCopyText preserves the table's keyboard and context-menu copy action.
-func guiIdentityCopyText(id identity.Identity) string {
-	comment := identity.DisplayText(id.Comment)
-	if comment == "" {
-		comment = "(no comment)"
-	}
-	return strings.Join([]string{
-		comment,
-		identity.DisplayText(id.Algorithm),
-		identity.DisplayBitSize(id.Blob, id.Algorithm),
-		identity.DisplayText(id.Fingerprint),
-	}, "\t")
 }
 
 func (a *guiApp) refreshIdentities() {
@@ -476,6 +472,7 @@ func (a *guiApp) refreshIdentities() {
 	endpoint, generation := a.endpointAgent.Snapshot()
 	if endpoint.Path == "" {
 		a.identities = nil
+		a.identityRowsValid = false
 		a.selectedIdentity = -1
 		a.keyStatus = "Upstream not configured"
 		a.keyError = ""
@@ -513,6 +510,7 @@ func (a *guiApp) refreshIdentities() {
 				a.keyError = ""
 				a.keyStatus = guiIdentityCount(len(identities))
 			}
+			a.identityRowsValid = false
 			if a.window != nil {
 				a.window.Invalidate()
 			}

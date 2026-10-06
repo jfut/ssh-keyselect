@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/jfut/ssh-keyselect/internal/sshwire"
 	"golang.org/x/crypto/ssh"
@@ -95,12 +96,22 @@ func DisplayBitSize(blob []byte, algorithm string) string {
 
 // DisplayText replaces terminal and bidirectional controls before rendering public metadata.
 func DisplayText(value string) string {
+	// Most key metadata is valid printable text. Keep that common path allocation-free.
+	if utf8.ValidString(value) && strings.IndexFunc(value, isDisplayControl) < 0 {
+		return value
+	}
 	value = strings.ToValidUTF8(value, "�")
-	return strings.Map(func(r rune) rune {
-		// Bidi controls can disguise comments or reorder surrounding UI text without visible glyphs.
-		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
-			return ' '
-		}
-		return r
-	}, value)
+	return strings.Map(sanitizeDisplayRune, value)
+}
+
+func isDisplayControl(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)
+}
+
+func sanitizeDisplayRune(r rune) rune {
+	// Bidi controls can disguise comments or reorder surrounding UI text without visible glyphs.
+	if isDisplayControl(r) {
+		return ' '
+	}
+	return r
 }

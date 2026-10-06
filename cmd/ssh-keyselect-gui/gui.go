@@ -20,6 +20,7 @@ import (
 	"github.com/jfut/ssh-keyselect/internal/agentproxy"
 	"github.com/jfut/ssh-keyselect/internal/cmdutil"
 	"github.com/jfut/ssh-keyselect/internal/config"
+	"github.com/jfut/ssh-keyselect/internal/guitable"
 	"github.com/jfut/ssh-keyselect/internal/identity"
 	"github.com/jfut/ssh-keyselect/internal/selector"
 	"github.com/jfut/ssh-keyselect/internal/transport"
@@ -55,6 +56,9 @@ type guiApp struct {
 	identities        []identity.Identity
 	identityTable     ui.ListState
 	identitySort      ui.SortOrder
+	identityRowsCache []guitable.IdentityRow
+	identityRowsSort  ui.SortOrder
+	identityRowsValid bool
 	selectedIdentity  int
 	refreshGeneration uint64
 	keyStatus         string

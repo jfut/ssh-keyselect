@@ -49,3 +49,10 @@ func PNG(size int) ([]byte, error) {
 	}
 	return encoded.Bytes(), nil
 }
+
+// WindowIconPNG returns an icon close to native window icon sizes. MyGo scales
+// this image into platform window icons, so the 32px source keeps that resize
+// from reducing a detailed 256px application image directly to titlebar size.
+func WindowIconPNG() ([]byte, error) {
+	return PNG(32)
+}

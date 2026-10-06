@@ -12,8 +12,6 @@ import (
 
 	"github.com/jfut/ssh-keyselect/internal/cmdutil"
 	"github.com/jfut/ssh-keyselect/internal/config"
-	"github.com/richardwilkes/unison"
-	"github.com/richardwilkes/unison/enums/role"
 )
 
 func TestGUIListenCanBeResolvedWithoutAnUpstreamAgent(t *testing.T) {
@@ -49,21 +47,6 @@ func TestGUIDiagnosticsRetainOnlyABoundedTail(t *testing.T) {
 	}
 }
 
-func TestGUIInWindowMenuBarUsesWhiteBackground(t *testing.T) {
-	root := unison.NewPanel()
-	menuBar := unison.NewPanel()
-	menuBar.Accessibility.Role = role.MenuBar
-	menuScroll := unison.NewScrollPanel()
-	menuBar.AddChild(menuScroll)
-	root.AddChild(menuBar)
-
-	styleGUIInWindowMenuBar(root)
-
-	if got, ok := menuScroll.BackgroundInk.(unison.Color); !ok || got != guiMenuInk {
-		t.Errorf("menu scroll background = %v, want white", menuScroll.BackgroundInk)
-	}
-}
-
 func TestExecuteVersion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := execute([]string{"version"}, &stdout, &stderr); code != 0 {
@@ -74,9 +57,9 @@ func TestExecuteVersion(t *testing.T) {
 	}
 }
 
-func TestGUIMainWindowTitleIncludesListenEndpointBeforeStatus(t *testing.T) {
+func TestGUIMainWindowTitleIncludesListenEndpointAndDirtyState(t *testing.T) {
 	const endpoint = "C:¥Users¥jun¥.ssh¥ssh-keyselect-agent.sock"
-	if got, want := guiMainWindowTitle(endpoint, true, " - tray icon unavailable"), endpoint+" - SSH KeySelect * - tray icon unavailable"; got != want {
+	if got, want := guiMainWindowTitle(endpoint, true), endpoint+" - SSH KeySelect *"; got != want {
 		t.Fatalf("GUI window title = %q, want %q", got, want)
 	}
 }

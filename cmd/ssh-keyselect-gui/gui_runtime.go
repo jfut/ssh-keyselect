@@ -12,7 +12,9 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/jfut/ssh-keyselect/internal/agentproxy"
 	"github.com/jfut/ssh-keyselect/internal/cmdutil"
@@ -21,7 +23,6 @@ import (
 	"github.com/jfut/ssh-keyselect/internal/listener"
 	"github.com/jfut/ssh-keyselect/internal/transport"
 	"github.com/jfut/ssh-keyselect/internal/upstream"
-	"github.com/richardwilkes/unison"
 )
 
 // resolveGUIListen chooses a frontend endpoint without requiring an upstream agent.
@@ -86,6 +87,7 @@ type guiListenerState struct {
 	cleanup func()
 	cancel  context.CancelFunc
 	done    chan error
+	active  atomic.Bool
 }
 
 // guiRuntime restarts serving at a changed endpoint and invalidates old client selections.
@@ -100,6 +102,9 @@ type guiRuntime struct {
 	listenPath      string
 	listenMode      transport.Mode
 	currentLogLevel string
+	currentLogFile  string
+	logOutput       *guiLogOutput
+	logLevel        *slog.LevelVar
 }
 
 func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
@@ -112,6 +117,41 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 	if err := cfg.Validate(); err != nil {
 		return "", "", err
 	}
+	cfg.Log.File = config.ExpandPath(cfg.Log.File)
+	logFileChanged := r.currentLogFile != cfg.Log.File
+	var preparedLogFile *os.File
+	if logFileChanged {
+		if r.logOutput == nil {
+			return "", "", errors.New("GUI log output is unavailable")
+		}
+		var err error
+		preparedLogFile, err = r.logOutput.open(cfg.Log.File)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	defer func() {
+		if preparedLogFile != nil {
+			_ = preparedLogFile.Close()
+		}
+	}()
+	applyAgentSettings := func() {
+		r.agent.Set(upstream.EndpointAgent{Path: cfg.Agent.Upstream, Mode: cfg.Agent.UpstreamMode})
+		if logFileChanged {
+			r.logOutput.replace(preparedLogFile)
+			preparedLogFile = nil
+			r.currentLogFile = cfg.Log.File
+		}
+		if r.currentLogLevel != cfg.Log.Level {
+			if r.logLevel != nil {
+				r.logLevel.Set(guiSlogLevel(cfg.Log.Level))
+			} else {
+				r.server.Logger = cmdutil.NewLogger(r.loggerOutput, cfg.Log.Level)
+				slog.SetDefault(r.server.Logger)
+			}
+			r.currentLogLevel = cfg.Log.Level
+		}
+	}
 	cfg.Agent.Upstream = config.ExpandPath(cfg.Agent.Upstream)
 	path, mode, err := resolveGUIListen(cfg)
 	if err != nil {
@@ -122,6 +162,10 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 	}
 
 	hadListener := r.listenerState != nil
+	if hadListener && r.listenerState.active.Load() && mode == r.listenMode && transport.SameEndpoint(path, r.listenPath) {
+		applyAgentSettings()
+		return r.listenPath, mode, nil
+	}
 	if !hadListener {
 		exists, err := guiListenPathExists(path)
 		if err != nil {
@@ -130,7 +174,7 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 		if exists {
 			r.listenPath = ""
 			r.listenMode = mode
-			r.applyAgentSettings(cfg)
+			applyAgentSettings()
 			if r.server.Logger != nil {
 				r.server.Logger.Warn("listen path already exists; leaving the proxy unconfigured", "listen", path)
 			}
@@ -163,7 +207,7 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 		}
 	}
 
-	r.applyAgentSettings(cfg)
+	applyAgentSettings()
 	r.listenPath, r.listenMode = path, mode
 	r.startListener(ln, cleanup)
 	if r.server.Logger != nil {
@@ -172,32 +216,20 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 	return path, mode, nil
 }
 
-// applyAgentSettings updates the upstream agent and logger even when Listen is unavailable.
-func (r *guiRuntime) applyAgentSettings(cfg config.Config) {
-	r.agent.Set(upstream.EndpointAgent{Path: cfg.Agent.Upstream, Mode: cfg.Agent.UpstreamMode})
-	if r.currentLogLevel != cfg.Log.Level {
-		r.server.Logger = cmdutil.NewLogger(r.loggerOutput, cfg.Log.Level)
-		slog.SetDefault(r.server.Logger)
-		r.currentLogLevel = cfg.Log.Level
-	}
-}
-
 func (r *guiRuntime) startListener(ln net.Listener, cleanup func()) {
 	serveCtx, cancel := context.WithCancel(r.ctx)
 	state := &guiListenerState{cleanup: cleanup, cancel: cancel, done: make(chan error, 1)}
+	state.active.Store(true)
 	r.listenerState = state
 	logger := r.server.Logger
 	go func() {
 		err := r.server.Serve(serveCtx, ln)
+		state.active.Store(false)
 		state.done <- err
 		if err != nil && serveCtx.Err() == nil {
 			logger.Error("SSH agent proxy stopped", "error", err)
 			if r.onServeError != nil {
-				unison.InvokeTask(func() {
-					if serveCtx.Err() == nil {
-						r.onServeError(err)
-					}
-				})
+				r.onServeError(err)
 			}
 		}
 	}()

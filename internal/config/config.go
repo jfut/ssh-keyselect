@@ -29,6 +29,7 @@ type AgentConfig struct {
 }
 
 type LogConfig struct {
+	File  string `toml:"file"`
 	Level string `toml:"level"`
 }
 
@@ -145,6 +146,7 @@ func Load(path string) (Config, error) {
 	}
 	cfg.Agent.Listen = ExpandPath(cfg.Agent.Listen)
 	cfg.Agent.Upstream = ExpandPath(cfg.Agent.Upstream)
+	cfg.Log.File = ExpandPath(cfg.Log.File)
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}

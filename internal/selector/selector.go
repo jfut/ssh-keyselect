@@ -79,15 +79,15 @@ func selectionDetails(requestContext SelectionContext) []selectionDetail {
 	return fields
 }
 
-// selectionTreeLines builds the shared hop hierarchy used by the terminal and GUI pickers.
+// selectionTreeLines builds the shared ASCII hop hierarchy used by the terminal and GUI pickers.
 func selectionTreeLines(requestContext SelectionContext) []selectionTreeLine {
 	details := selectionDetails(requestContext)
 	lines := make([]selectionTreeLine, 0, len(details)*3)
 	for index, detail := range details {
-		branch := "├─"
-		fieldIndent := "│  "
+		branch := "|--"
+		fieldIndent := "|   "
 		if index == len(details)-1 {
-			branch = "└─"
+			branch = "`--"
 			fieldIndent = "   "
 		}
 		lines = append(lines,

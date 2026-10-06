@@ -7,4 +7,8 @@ package selector
 
 import "github.com/egoist/mygo"
 
+func capturePickerReturnWindow() uintptr { return 0 }
+
 func acquirePickerNativeFocus(*mygo.Window) {}
+
+func restorePickerReturnWindow(uintptr) {}

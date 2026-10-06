@@ -102,6 +102,7 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 	if parentProvider != nil {
 		parent = parentProvider()
 	}
+	returnWindow := capturePickerReturnWindow()
 	shownAt := time.Now()
 	offered := append([]identity.Identity(nil), identities...)
 	picker := &guiPickerState{
@@ -177,8 +178,10 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 	defer stopClose()
 
 	var selection guiSelectionResult
+	closedByUser := false
 	select {
 	case selection = <-closed:
+		closedByUser = true
 	case <-ctx.Done():
 		window.Close()
 		selection = <-closed
@@ -191,6 +194,14 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 		s.active = nil
 	}
 	s.mu.Unlock()
+	if closedByUser && ctx.Err() == nil {
+		select {
+		case <-s.stopped:
+		default:
+			// The native modal owner may be reactivated when the picker closes, so restore the SSH caller afterward.
+			mygo.RunOnMain(func() { restorePickerReturnWindow(returnWindow) })
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

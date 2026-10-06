@@ -10,32 +10,66 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
-	"os/signal"
-	"syscall"
+	"runtime"
+	"sync"
+	"sync/atomic"
 
 	"github.com/alecthomas/kong"
-	"github.com/jfut/ssh-keyselect/assets/gui"
+	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
 	"github.com/jfut/ssh-keyselect/internal/agentproxy"
-	"github.com/jfut/ssh-keyselect/internal/branding"
 	"github.com/jfut/ssh-keyselect/internal/cmdutil"
 	"github.com/jfut/ssh-keyselect/internal/config"
-	"github.com/jfut/ssh-keyselect/internal/guiidentitytable"
-	"github.com/jfut/ssh-keyselect/internal/guistyle"
-	"github.com/jfut/ssh-keyselect/internal/guiwindow"
 	"github.com/jfut/ssh-keyselect/internal/identity"
 	"github.com/jfut/ssh-keyselect/internal/selector"
-	"github.com/jfut/ssh-keyselect/internal/systemtray"
 	"github.com/jfut/ssh-keyselect/internal/transport"
 	"github.com/jfut/ssh-keyselect/internal/upstream"
-	"github.com/richardwilkes/toolbox/v2/geom"
-	"github.com/richardwilkes/unison"
-	"github.com/richardwilkes/unison/enums/align"
-	"github.com/richardwilkes/unison/enums/paintstyle"
 )
 
 // guiCommandName identifies the executable in help and startup errors.
 const guiCommandName = "ssh-keyselect-gui"
+
+// guiApp owns the UI state; MyGo builds each native frame from this state.
+type guiApp struct {
+	ctx          context.Context
+	stop         context.CancelFunc
+	logger       *slog.Logger
+	loggerOutput io.Writer
+	cfg          config.Config
+	configPath   string
+	dirty        bool
+	applying     bool
+	actualListen string
+	listenMode   transport.Mode
+
+	endpointAgent  *guiEndpointAgent
+	server         *agentproxy.Server
+	selector       *selector.GUISelector
+	runtime        *guiRuntime
+	window         *mygo.Window
+	mainWindow     atomic.Pointer[mygo.Window]
+	mainVisible    atomic.Bool
+	tray           *mygo.Tray
+	trayAutoSelect *mygo.MenuItem
+
+	identities        []identity.Identity
+	identityTable     ui.ListState
+	identitySort      ui.SortOrder
+	selectedIdentity  int
+	refreshGeneration uint64
+	keyStatus         string
+	keyError          string
+	loading           bool
+	statusMessage     string
+	autoSelect        bool
+	confirmAutoSelect bool
+	closePrompt       bool
+	closeConfirmed    bool
+	aboutWindow       *mygo.Window
+	uiStarted         bool
+
+	shutdownOnce sync.Once
+}
 
 type guiOptions struct {
 	Config       *string          `help:"TOML configuration file." placeholder:"FILE"`
@@ -47,7 +81,7 @@ type guiOptions struct {
 	Version      kong.VersionFlag `help:"Print version information and quit."`
 }
 
-// executeGUI parses options and runs the GUI agent command.
+// executeGUI parses options, starts the native UI event loop, and owns the proxy lifecycle.
 func executeGUI(args []string, stdout, stderr io.Writer) int {
 	var options guiOptions
 	parser, err := kong.New(&options,
@@ -72,6 +106,7 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	if exitCode == 0 {
 		return 0
 	}
+
 	configPath := ""
 	if options.Config != nil {
 		configPath = *options.Config
@@ -106,468 +141,106 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	if err := cfg.Validate(); err != nil {
 		return cmdutil.ReportError(stderr, guiCommandName, err)
 	}
-	// This mostly idle GUI does not need OpenGL driver and per-window context allocations.
-	// Apply the default before Unison starts, while honoring an explicit rendering preference.
-	if _, overridden := os.LookupEnv(unison.CPURenderingEnvKey); !overridden {
-		if err := os.Setenv(unison.CPURenderingEnvKey, "1"); err != nil {
-			return cmdutil.ReportError(stderr, guiCommandName, fmt.Errorf("configure GUI rendering: %w", err))
-		}
-	}
-	requestedListenMode := cfg.Agent.ListenMode
-	resolvedListenPath, effectiveListenMode, err := resolveGUIListen(cfg)
+
+	listenPath, effectiveListenMode, err := resolveGUIListen(cfg)
 	if err != nil {
 		return cmdutil.ReportError(stderr, guiCommandName, err)
 	}
-	listenPathExists, err := guiListenPathExists(resolvedListenPath)
+	listenPathExists, err := guiListenPathExists(listenPath)
 	if err != nil {
 		return cmdutil.ReportError(stderr, guiCommandName, err)
 	}
 	if listenPathExists {
-		resolvedListenPath = ""
+		listenPath = ""
 	}
-	activeConfigPath := configPath
-	if activeConfigPath == "" {
-		activeConfigPath, err = config.DefaultPath()
+	if configPath == "" {
+		configPath, err = config.DefaultPath()
 		if err != nil {
 			return cmdutil.ReportError(stderr, guiCommandName, err)
 		}
 	}
 
-	logger := cmdutil.NewLogger(stderr, cfg.Log.Level)
-	// Unison's renderer startup messages must also respect the configured log level.
+	logOutput, err := newGUILogOutput(stderr, cfg.Log.File)
+	if err != nil {
+		return cmdutil.ReportError(stderr, guiCommandName, err)
+	}
+	var logLevel slog.LevelVar
+	logger := newGUILogger(logOutput, &logLevel, cfg.Log.Level)
 	slog.SetDefault(logger)
+	ctx, stop := context.WithCancel(context.Background())
 	endpointAgent := &guiEndpointAgent{}
 	endpointAgent.Set(upstream.EndpointAgent{Path: cfg.Agent.Upstream, Mode: cfg.Agent.UpstreamMode})
-	server := agentproxy.Server{
-		Agent:  endpointAgent,
-		Logger: logger,
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	guiSelector := selector.NewGUISelector()
 	guiSelector.SetRefreshCallback(func(refreshCtx context.Context) ([]identity.Identity, error) {
 		endpoint, _ := endpointAgent.Snapshot()
 		return endpoint.List(refreshCtx)
 	})
-	server.Selector = guiSelector
-	logger.Info("starting SSH KeySelect GUI", "listen", resolvedListenPath, "ui", "gui")
-	serveWithGUI(ctx, stop, cfg, activeConfigPath, resolvedListenPath, requestedListenMode, effectiveListenMode,
-		endpointAgent, &server, guiSelector, logger, stderr)
+	server := &agentproxy.Server{Agent: endpointAgent, Selector: guiSelector, Logger: logger}
+	app := &guiApp{
+		ctx: ctx, stop: stop, logger: logger, loggerOutput: logOutput, cfg: cfg,
+		configPath: configPath, actualListen: listenPath, listenMode: effectiveListenMode,
+		endpointAgent: endpointAgent, server: server, selector: guiSelector,
+		selectedIdentity: -1,
+	}
+	guiSelector.SetWindowProvider(func() *mygo.Window {
+		window := app.mainWindow.Load()
+		if window != nil && !window.IsDestroyed() && app.mainVisible.Load() {
+			return window
+		}
+		return nil
+	})
+	app.runtime = &guiRuntime{
+		ctx: ctx, server: server, agent: endpointAgent, loggerOutput: logOutput, logOutput: logOutput, logLevel: &logLevel,
+		listenPath: listenPath, listenMode: effectiveListenMode, currentLogLevel: cfg.Log.Level,
+		currentLogFile: cfg.Log.File,
+	}
+	app.runtime.onServeError = func(serveErr error) {
+		if window := app.mainWindow.Load(); window != nil {
+			window.Update(func() {
+				app.actualListen = ""
+				app.statusMessage = "Agent proxy stopped: " + serveErr.Error()
+				app.updateWindowTitle()
+				if app.window != nil {
+					app.window.Invalidate()
+				}
+			})
+		}
+	}
+
+	mygo.App.SetName("SSH KeySelect")
+	mygo.App.SetVersion(version)
+	// Keep the native application menu on macOS; other platforms use the
+	// in-window menu bar so its text follows the app's normal UI size.
+	if runtime.GOOS == "darwin" {
+		mygo.App.SetMenu(app.applicationMenu())
+	}
+	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { app.shutdown() })
+	mygo.App.OnActivate(func(hasVisibleWindows bool) {
+		if !hasVisibleWindows && app.uiStarted {
+			app.showMainWindow()
+		}
+	})
+	mygo.App.WhenReady(app.start)
+	if err := mygo.App.Run(); err != nil {
+		app.shutdown()
+		return cmdutil.ReportError(stderr, guiCommandName, err)
+	}
+	app.shutdown()
 	return 0
 }
 
-func guiMainWindowTitle(endpoint string, dirty bool, statusSuffix string) string {
-	title := branding.EndpointTitle(endpoint)
-	if dirty {
-		title += " *"
-	}
-	return title + statusSuffix
-}
-
-func serveWithGUI(
-	ctx context.Context,
-	stop context.CancelFunc,
-	cfg config.Config,
-	configFilePath string,
-	listenPath string,
-	requestedListenMode, listenMode transport.Mode,
-	endpointAgent *guiEndpointAgent,
-	server *agentproxy.Server,
-	guiSelector *selector.GUISelector,
-	logger *slog.Logger,
-	loggerOutput io.Writer,
-) {
-	go func() {
-		<-ctx.Done()
-		unison.InvokeTask(unison.AttemptQuit)
-	}()
-
-	var runtimeState *guiRuntime
-	var configState *guiConfigState
-	var cleanupTray func() error
-	var updateTrayTooltip func(string) error
-
-	unison.Start(
-		unison.StartupFinishedCallback(func() {
-			configureGUIAppearance()
-			window, err := unison.NewWindow(branding.Name)
-			if err != nil {
-				logger.Error("create GUI status window", "error", err)
-				guiSelector.Stop()
-				stop()
-				unison.AttemptQuit()
-				return
-			}
-			windowHiddenToTray := false
-			guiSelector.SetSelectionDismissedCallback(func() {
-				if windowHiddenToTray && window.IsValid() {
-					// Modal completion can reactivate the main window; restore the tray-hidden state afterward.
-					window.Hide()
-				}
-			})
-			if icons, iconErr := guiassets.TitleIcons(); iconErr != nil {
-				logger.Warn("create application icon", "error", iconErr)
-			} else {
-				window.SetTitleIcons(icons)
-			}
-			listenDisplayEndpoint := guiDisplayEndpointPath(listenPath)
-			statusTitleSuffix := ""
-			updateWindowTitle := func() {
-				window.SetTitle(guiMainWindowTitle(listenDisplayEndpoint, configState != nil && configState.dirty, statusTitleSuffix))
-			}
-			updateWindowTitle()
-			updateListenTitle := func(endpoint string) {
-				listenDisplayEndpoint = guiDisplayEndpointPath(endpoint)
-				updateWindowTitle()
-				if updateTrayTooltip != nil {
-					if err := updateTrayTooltip(listenDisplayEndpoint); err != nil {
-						logger.Warn("update system tray tooltip", "error", err)
-					}
-				}
-			}
-			window.AllowCloseCallback = func() bool {
-				if configState != nil && configState.applying && ctx.Err() == nil {
-					return false
-				}
-				if configState == nil || !configState.dirty {
-					return true
-				}
-				switch guiConfirmSaveBeforeClose(configState.filePath) {
-				case unison.ModalResponseOK:
-					if err := configState.save(); err != nil {
-						showGUIErrorDialog("Could not save configuration.", err)
-						return false
-					}
-					return true
-				case unison.ModalResponseDiscard:
-					return true
-				case unison.ModalResponseCancel:
-					return false
-				default:
-					return false
-				}
-			}
-
-			content := window.Content()
-			content.SetBorder(unison.NewEmptyBorder(geom.NewUniformInsets(guiStatusCardBorderInset + guiStatusCardPadding)))
-			content.SetLayout(&unison.FlexLayout{Columns: 1, VSpacing: 8})
-			content.DrawCallback = func(canvas *unison.Canvas, rect geom.Rect) {
-				canvas.DrawRect(rect, guiWindowInk.Paint(canvas, rect, paintstyle.Fill))
-			}
-
-			body := unison.NewPanel()
-			body.SetLayout(&unison.FlexLayout{Columns: 1, VSpacing: 7})
-			body.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true, VGrab: true})
-
-			identityCard := newGUIStatusCard()
-			identityCard.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, VAlign: align.Fill, HGrab: true, VGrab: true})
-			identityHeading := unison.NewPanel()
-			identityHeading.SetLayout(&unison.FlexLayout{Columns: 2, HSpacing: 12, VAlign: align.Middle})
-			identityHeading.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
-			keyTitleGroup := unison.NewPanel()
-			keyTitleGroup.SetLayout(&unison.FlexLayout{Columns: 2, HSpacing: 8, VAlign: align.Middle})
-			keyTitleGroup.AddChild(newGUISectionBadge("Keys", guiKeysBadgeFill, guiKeysBadgeInk))
-			keysStatus := unison.NewLabel()
-			keysStatus.Font = guiFont(9, false)
-			keysStatus.SetTitle("Upstream not configured")
-			keysStatus.OnBackgroundInk = guiMutedInk
-			keysStatus.SetLayoutData(&unison.FlexLayoutData{
-				VAlign: align.Middle, MinSize: geom.NewSize(200, 0), SizeHint: geom.NewSize(200, 0),
-			})
-			keyTitleGroup.AddChild(keysStatus)
-			keyTitleGroup.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
-			identityHeading.AddChild(keyTitleGroup)
-
-			refresh := guistyle.NewRefreshButton()
-			identityHeading.AddChild(refresh)
-			identityCard.AddChild(identityHeading)
-
-			keyTable := guiidentitytable.New(false)
-			keysScroll := unison.NewScrollPanel()
-			keyTable.AttachTo(keysScroll)
-			keysScroll.SetLayoutData(guiidentitytable.ScrollLayoutData(0, guiidentitytable.MaxVisibleRows))
-			identityCard.AddChild(keysScroll)
-			body.AddChild(identityCard)
-
-			connectionCard := newGUIStatusCard()
-			connectionCard.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
-			connectionCard.SetLayout(&unison.FlexLayout{Columns: 1, VSpacing: 7})
-			connectionTitle := unison.NewPanel()
-			connectionTitle.SetLayout(&unison.FlexLayout{Columns: 2, HSpacing: 8, VAlign: align.Middle})
-			connectionTitle.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
-			connectionTitle.AddChild(newGUISectionBadge("Agent Proxy", guiActiveFillInk, guiActiveInk))
-			autoSelectControls := unison.NewPanel()
-			autoSelectControls.SetLayout(&unison.FlexLayout{Columns: 3, HSpacing: 4, VAlign: align.Middle})
-			autoSelectControls.SetLayoutData(&unison.FlexLayoutData{HAlign: align.End, HGrab: true})
-			autoSelectLabel := newGUISectionBadge("Auto Select", guiKeysBadgeFill, guiKeysBadgeInk)
-			autoSelectLabel.Tooltip = unison.NewTooltipWithText(
-				"When On, every upstream key is available without a per-connection selection.")
-			autoSelectOff := unison.NewButton()
-			autoSelectOff.SetTitle("Off")
-			autoSelectOn := unison.NewButton()
-			autoSelectOn.SetTitle("On")
-			autoSelectTooltip := unison.NewTooltipWithText(
-				"On exposes every upstream identity to clients using this proxy. Turn it Off after batch work.")
-			autoSelectOff.Tooltip = autoSelectTooltip
-			autoSelectOn.Tooltip = autoSelectTooltip
-			updateAutoSelectButtons := func() {
-				enabled := server.AutoSelect()
-				styleGUIAutoSelectButton(autoSelectOff, !enabled, false)
-				styleGUIAutoSelectButton(autoSelectOn, enabled, true)
-			}
-			autoSelectOff.ClickCallback = func() {
-				server.SetAutoSelect(false)
-				updateAutoSelectButtons()
-			}
-			autoSelectOn.ClickCallback = func() {
-				if server.AutoSelect() || !guiConfirmAutoSelectEnable() {
-					return
-				}
-				server.SetAutoSelect(true)
-				updateAutoSelectButtons()
-			}
-			autoSelectControls.AddChild(autoSelectLabel)
-			autoSelectControls.AddChild(autoSelectOff)
-			autoSelectControls.AddChild(autoSelectOn)
-			updateAutoSelectButtons()
-			proxyTitleControls := unison.NewPanel()
-			proxyTitleControls.SetLayout(&unison.FlexLayout{Columns: 2, HSpacing: 10, VAlign: align.Middle})
-			proxyTitleControls.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
-			settingsButton := guistyle.NewIconButton(guistyle.SettingsIcon, "Settings")
-			styleGUIAccentButton(settingsButton)
-			settingsButton.SetLayoutData(&unison.FlexLayoutData{HAlign: align.End, VAlign: align.Middle})
-			proxyTitleControls.AddChild(settingsButton)
-			proxyTitleControls.AddChild(autoSelectControls)
-			connectionTitle.AddChild(proxyTitleControls)
-			connectionCard.AddChild(connectionTitle)
-
-			connectionRows := unison.NewPanel()
-			connectionRows.SetLayout(&unison.FlexLayout{Columns: 1, VSpacing: 5})
-			connectionRows.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
-			updateUpstreamRow := guiAddConnectionModeRow(connectionRows, guiAccentInk, guiKeysBadgeFill, guiKeysBadgeInk,
-				"Upstream", "UPSTREAM_SSH_AUTH_SOCK", "", "", transport.Auto, nil)
-			separator := unison.NewSeparator()
-			separator.LineInk = guiBorderInk
-			connectionRows.AddChild(separator)
-			updateListenRow := guiAddConnectionModeRow(connectionRows, guiActiveInk, guiActiveFillInk, guiActiveInk,
-				"Listen", "SSH_AUTH_SOCK", "Proxy", listenPath, listenMode, nil)
-			connectionCard.AddChild(connectionRows)
-			body.AddChild(connectionCard)
-			content.AddChild(body)
-
-			firstIdentityRefresh := true
-			finishIdentityLayout := func() {
-				keysStatus.MarkForLayoutAndRedraw()
-				if firstIdentityRefresh {
-					firstIdentityRefresh = false
-					window.Pack()
-					guiwindow.CenterOnPrimaryDisplay(window)
-					return
-				}
-				_, preferred, _ := content.Sizes(geom.Size{})
-				current := window.ContentRect()
-				if current.Width < preferred.Width || current.Height < preferred.Height {
-					window.SetContentRect(geom.NewRect(
-						current.X, current.Y,
-						max(current.Width, preferred.Width), max(current.Height, preferred.Height),
-					))
-					window.EnsureOnDisplay()
-				}
-			}
-
-			refreshIdentities := func() {
-				endpoint, generation := endpointAgent.Snapshot()
-				if endpoint.Path == "" {
-					keyTable.SetRows(nil)
-					keysScroll.SetLayoutData(guiidentitytable.ScrollLayoutData(0, guiidentitytable.MaxVisibleRows))
-					keysStatus.SetTitle("Upstream not configured")
-					keysStatus.Tooltip = nil
-					refresh.SetEnabled(false)
-					finishIdentityLayout()
-					return
-				}
-				refresh.SetEnabled(false)
-				keysStatus.SetTitle("Loading keys...")
-				keysStatus.Tooltip = nil
-				keysStatus.MarkForLayoutAndRedraw()
-				go func() {
-					requestCtx, cancel := context.WithTimeout(ctx, upstream.RequestTimeout)
-					defer cancel()
-					identities, listErr := endpoint.List(requestCtx)
-					unison.InvokeTask(func() {
-						if !window.IsValid() {
-							return
-						}
-						_, currentGeneration := endpointAgent.Snapshot()
-						if currentGeneration != generation {
-							return
-						}
-						refresh.SetEnabled(true)
-						if listErr != nil {
-							keyTable.SetRows(nil)
-							keysScroll.SetLayoutData(guiidentitytable.ScrollLayoutData(0, guiidentitytable.MaxVisibleRows))
-							keysStatus.SetTitle("Could not load keys")
-							keysStatus.Tooltip = unison.NewTooltipWithText(listErr.Error())
-						} else if len(identities) == 0 {
-							keyTable.SetRows(nil)
-							keysScroll.SetLayoutData(guiidentitytable.ScrollLayoutData(0, guiidentitytable.MaxVisibleRows))
-							keysStatus.SetTitle("0 keys")
-						} else {
-							keyTable.SetRows(identities)
-							keysScroll.SetLayoutData(guiidentitytable.ScrollLayoutData(len(identities), guiidentitytable.MaxVisibleRows))
-							countLabel := fmt.Sprintf("%d keys", len(identities))
-							if len(identities) == 1 {
-								countLabel = "1 key"
-							}
-							keysStatus.SetTitle(countLabel)
-						}
-						finishIdentityLayout()
-					})
-				}()
-			}
-			refresh.ClickCallback = refreshIdentities
-
-			openSettings := func() {
-				if configState.applying {
-					return
-				}
-				next, ok, editErr := editGUIEndpointSettings(configState.cfg)
-				if editErr != nil {
-					showGUIErrorDialog("Could not open settings.", editErr)
-					return
-				}
-				if !ok {
-					return
-				}
-				dirty := configState.dirty || next != configState.cfg
-				configState.apply(next, dirty, func(err error) {
-					if err != nil {
-						showGUIErrorDialog("Could not apply settings.", err)
-					}
-				})
-			}
-			settingsButton.ClickCallback = openSettings
-			configState = &guiConfigState{
-				cfg: cfg, filePath: configFilePath, actualListen: listenPath,
-				effectiveListenMode: listenMode, onDirtyChange: updateWindowTitle,
-			}
-			runtimeState = &guiRuntime{
-				ctx: ctx, server: server, agent: endpointAgent, loggerOutput: loggerOutput,
-				listenPath: listenPath, listenMode: listenMode, currentLogLevel: cfg.Log.Level,
-			}
-			runtimeState.onServeError = func(serveErr error) {
-				if !window.IsValid() {
-					return
-				}
-				keysStatus.SetTitle("Agent proxy stopped")
-				keysStatus.Tooltip = unison.NewTooltipWithText(serveErr.Error())
-				finishIdentityLayout()
-			}
-			configState.runtime = runtimeState
-			configState.onApplyingChange = func() { settingsButton.SetEnabled(!configState.applying) }
-			updateConnectionRows := func() {
-				endpoint, _ := endpointAgent.Snapshot()
-				var effectiveUpstreamMode transport.Mode
-				var modeErr error
-				if endpoint.Path != "" {
-					effectiveUpstreamMode, modeErr = upstream.ResolveMode(endpoint.Path, endpoint.Mode)
-				}
-				updateUpstreamRow(endpoint.Path, effectiveUpstreamMode, modeErr)
-				updateListenRow(configState.actualListen, configState.effectiveListenMode, nil)
-				updateListenTitle(configState.actualListen)
-			}
-			configState.onUpdate = func() {
-				updateConnectionRows()
-				keyTable.SetRows(nil)
-				keysScroll.SetLayoutData(guiidentitytable.ScrollLayoutData(0, guiidentitytable.MaxVisibleRows))
-				refreshIdentities()
-			}
-			updateConnectionRows()
-
-			installGUIFileMenu(window, guiFileMenuActions{
-				enabled: func() bool { return !configState.applying },
-				open:    configState.open, save: configState.saveFromMenu, saveAs: configState.saveAs, settings: openSettings,
-			})
-			window.SetContentRect(geom.NewRect(100, 100, 1080, 510))
-			guiwindow.CenterOnPrimaryDisplay(window)
-			window.ToFront()
-
-			startTray := func() (func() error, error) {
-				if !systemtray.Supported() {
-					return nil, nil
-				}
-				trayIconPNG, iconErr := guiassets.PNG(16)
-				if iconErr != nil {
-					return nil, fmt.Errorf("decode system tray icon: %w", iconErr)
-				}
-				showWindow := func() {
-					unison.InvokeTask(func() {
-						if window.IsValid() {
-							windowHiddenToTray = false
-							if window.IsMinimized() {
-								window.Minimize()
-							}
-							window.Show()
-							window.ToFront()
-						}
-					})
-				}
-				trayCleanup, tooltipUpdater, trayErr := systemtray.Start(systemtray.Callbacks{
-					Show:    showWindow,
-					Quit:    func() { unison.InvokeTask(unison.AttemptQuit) },
-					Refresh: func() { unison.InvokeTask(refreshIdentities) },
-					IconPNG: trayIconPNG,
-				}, listenDisplayEndpoint)
-				if trayErr == nil {
-					updateTrayTooltip = tooltipUpdater
-					window.MinimizedCallback = func(minimized bool) {
-						if minimized {
-							windowHiddenToTray = true
-							window.Hide()
-						}
-					}
-				}
-				return trayCleanup, trayErr
-			}
-
-			// Register the icon even when another instance already owns the proxy endpoint.
-			var trayErr error
-			cleanupTray, trayErr = startTray()
-			if trayErr != nil {
-				logger.Error("create system tray icon", "error", trayErr)
-				statusTitleSuffix = " - tray icon unavailable"
-				updateWindowTitle()
-				keysStatus.SetTitle("Could not create system tray icon")
-				keysStatus.Tooltip = unison.NewTooltipWithText(trayErr.Error())
-				keysStatus.MarkForLayoutAndRedraw()
-			}
-			configState.apply(cfg, false, func(applyErr error) {
-				if applyErr != nil {
-					logger.Error("listen on agent endpoint", "error", applyErr)
-					keysStatus.SetTitle("Agent proxy could not start")
-					keysStatus.Tooltip = unison.NewTooltipWithText(applyErr.Error())
-					refresh.SetEnabled(false)
-					finishIdentityLayout()
-				}
-			})
-		}),
-		unison.QuittingCallback(func() {
-			guiShutdownProxy(guiSelector, stop, runtimeState)
-			if cleanupTray != nil {
-				if err := cleanupTray(); err != nil {
-					logger.Error("remove system tray icon", "error", err)
-				}
-			}
-		}),
-	)
-}
-
-// guiShutdownProxy must finish in the quit callback because desktop Unison.Start
-// never returns. Stop the picker first so handlers can drain without UI tasks.
-func guiShutdownProxy(guiSelector *selector.GUISelector, stop context.CancelFunc, runtimeState *guiRuntime) {
-	guiSelector.Stop()
-	stop()
-	if runtimeState != nil {
-		runtimeState.Close()
-	}
+func (a *guiApp) shutdown() {
+	a.shutdownOnce.Do(func() {
+		a.selector.Stop()
+		a.stop()
+		if a.runtime != nil {
+			a.runtime.Close()
+		}
+		if a.tray != nil {
+			a.tray.Destroy()
+		}
+		if output, ok := a.loggerOutput.(io.Closer); ok {
+			_ = output.Close()
+		}
+	})
 }

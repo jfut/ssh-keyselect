@@ -43,6 +43,18 @@ func guiWindowsPathForDisplay(path string) string {
 	return strings.ReplaceAll(path, `\`, "¥")
 }
 
+// guiDisplayFilePath uses the same yen-style backslash rendering as socket path fields.
+func guiDisplayFilePath(path string) string {
+	if path == "" {
+		return ""
+	}
+	return guiWindowsPathForDisplay(filepath.Clean(filepath.FromSlash(path)))
+}
+
+func guiFilePathFromDisplay(path string) string {
+	return strings.ReplaceAll(path, "¥", `\`)
+}
+
 // guiListenPathForConfig writes filesystem endpoints in native Windows form while preserving named pipes.
 func guiListenPathForConfig(endpoint string) string {
 	if endpoint == "" || winpath.IsNamedPipe(endpoint) {

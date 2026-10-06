@@ -145,13 +145,13 @@ func TestSelectionFrameShowsDisplayTimeHostContextAndCancelHint(t *testing.T) {
 		t.Errorf("selection prompt should precede the key table:\n%s", frame)
 	}
 	for _, expected := range []string{
-		"├─ Forwarding hop 1",
-		"│  Host key: ssh-ed25519 SHA256:first-hop",
-		"│  known_hosts hints: gateway.example.test",
-		"├─ Forwarding hop 2",
-		"│  Host key: ssh-ed25519 SHA256:second-hop",
-		"│  known_hosts hints: app.example.test",
-		"└─ Current target host",
+		"|-- Forwarding hop 1",
+		"|   Host key: ssh-ed25519 SHA256:first-hop",
+		"|   known_hosts hints: gateway.example.test",
+		"|-- Forwarding hop 2",
+		"|   Host key: ssh-ed25519 SHA256:second-hop",
+		"|   known_hosts hints: app.example.test",
+		"`-- Current target host",
 		"   Host key: ssh-ed25519 SHA256:destination-host",
 		"   known_hosts hints: node .example .test",
 		"work key",

@@ -8,74 +8,68 @@ package selector
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
 	"github.com/jfut/ssh-keyselect/assets/gui"
 	"github.com/jfut/ssh-keyselect/internal/branding"
-	"github.com/jfut/ssh-keyselect/internal/guiidentitytable"
-	"github.com/jfut/ssh-keyselect/internal/guistyle"
-	"github.com/jfut/ssh-keyselect/internal/guiwindow"
+	"github.com/jfut/ssh-keyselect/internal/guitable"
 	"github.com/jfut/ssh-keyselect/internal/identity"
 	"github.com/jfut/ssh-keyselect/internal/upstream"
-	"github.com/richardwilkes/toolbox/v2/geom"
-	"github.com/richardwilkes/unison"
-	"github.com/richardwilkes/unison/enums/align"
-	"github.com/richardwilkes/unison/enums/behavior"
-	"github.com/richardwilkes/unison/enums/mod"
 )
 
-// GUISelector shows a floating Unison window for each identity choice.
+var guiPickerRefreshIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5m-5 4a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>`))
+
+// GUISelector serializes identity requests and presents each one in a MyGo native window.
 type GUISelector struct {
-	queue              chan struct{}
-	stopped            chan struct{}
-	initOnce           sync.Once
-	stopOnce           sync.Once
-	callbackMu         sync.RWMutex
-	refresh            func(context.Context) ([]identity.Identity, error)
-	selectionDismissed func()
+	queue    chan struct{}
+	stopped  chan struct{}
+	initOnce sync.Once
+	stopOnce sync.Once
+
+	mu      sync.RWMutex
+	refresh func(context.Context) ([]identity.Identity, error)
+	parent  func() *mygo.Window
+	active  *mygo.Window
 }
 
-// NewGUISelector creates a selector that must be used after Unison.Start begins.
+// NewGUISelector creates a selector that is used after MyGo's application loop starts.
 func NewGUISelector() *GUISelector {
 	return &GUISelector{queue: make(chan struct{}, 1), stopped: make(chan struct{})}
 }
 
-// SetRefreshCallback supplies the upstream identity listing used by the picker's Refresh Keys button.
+// SetRefreshCallback supplies the upstream identity listing used by the picker's refresh action.
 func (s *GUISelector) SetRefreshCallback(refresh func(context.Context) ([]identity.Identity, error)) {
-	s.callbackMu.Lock()
+	s.mu.Lock()
 	s.refresh = refresh
-	s.callbackMu.Unlock()
+	s.mu.Unlock()
 }
 
-// SetSelectionDismissedCallback runs callback on the UI thread after a picker closes.
-func (s *GUISelector) SetSelectionDismissedCallback(callback func()) {
-	s.callbackMu.Lock()
-	s.selectionDismissed = callback
-	s.callbackMu.Unlock()
+// SetWindowProvider supplies the main window that owns each modal identity picker.
+func (s *GUISelector) SetWindowProvider(parent func() *mygo.Window) {
+	s.mu.Lock()
+	s.parent = parent
+	s.mu.Unlock()
 }
 
-func (s *GUISelector) refreshCallback() func(context.Context) ([]identity.Identity, error) {
-	s.callbackMu.RLock()
-	defer s.callbackMu.RUnlock()
-	return s.refresh
-}
-
-func (s *GUISelector) selectionDismissedCallback() func() {
-	s.callbackMu.RLock()
-	defer s.callbackMu.RUnlock()
-	return s.selectionDismissed
-}
-
-// Stop cancels pending selection requests when the GUI application is closing.
+// Stop cancels pending selection requests when the application is closing.
 func (s *GUISelector) Stop() {
 	s.init()
-	s.stopOnce.Do(func() { close(s.stopped) })
+	s.stopOnce.Do(func() {
+		close(s.stopped)
+		s.mu.RLock()
+		window := s.active
+		s.mu.RUnlock()
+		if window != nil {
+			window.Close()
+		}
+	})
 }
 
-// Select displays the accepted SSH host-key path alongside the identity picker.
+// Select displays the verified SSH host-key path and waits for one selected identity.
 func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity, requestContext SelectionContext) ([]identity.Identity, error) {
 	if len(identities) == 0 {
 		return nil, nil
@@ -94,66 +88,112 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 		return nil, ErrCancelled
 	}
 	defer func() { <-s.queue }()
+	select {
+	case <-s.stopped:
+		return nil, ErrCancelled
+	default:
+	}
 
-	result := make(chan guiSelectionResult, 1)
-	unison.InvokeTask(func() {
-		if err := ctx.Err(); err != nil {
-			result <- guiSelectionResult{err: err}
-			return
-		}
-		select {
-		case <-s.stopped:
-			result <- guiSelectionResult{err: ErrCancelled}
-			return
-		default:
-		}
-		previousForeground := capturePreviousForegroundWindow()
-		shownAt := time.Now()
-		window, chosenIdentity, err := guiNewSelectionWindow(ctx, identities, s.refreshCallback(), requestContext, shownAt)
-		if err != nil {
-			result <- guiSelectionResult{err: err}
-			return
-		}
-		stopClose := context.AfterFunc(ctx, func() {
-			unison.InvokeTask(func() {
-				if window.IsValid() {
-					window.StopModal(unison.ModalResponseCancel)
-				}
-			})
-		})
-		response := window.RunModal()
-		stopClose()
-		if callback := s.selectionDismissedCallback(); callback != nil {
-			callback()
-		}
-		selectedIdentity, selected := chosenIdentity()
-		if err := ctx.Err(); err != nil {
-			result <- guiSelectionResult{err: err}
-			return
-		}
-		if response != unison.ModalResponseOK || !selected {
-			result <- guiSelectionResult{err: ErrCancelled}
-			return
-		}
-		// RunModal reactivates the app's previously active window as it unwinds. Queue external focus restoration
-		// for the next event pass so that this deferred activation cannot put the app window back on top afterward.
-		unison.InvokeTask(func() {
-			restorePreviousForegroundWindow(previousForeground)
-			result <- guiSelectionResult{identity: selectedIdentity}
-		})
+	s.mu.RLock()
+	parentProvider, refresh := s.parent, s.refresh
+	s.mu.RUnlock()
+	var parent *mygo.Window
+	if parentProvider != nil {
+		parent = parentProvider()
+	}
+	shownAt := time.Now()
+	picker := &guiPickerState{
+		ctx: ctx, identities: append([]identity.Identity(nil), identities...),
+		offered:        append([]identity.Identity(nil), identities...),
+		requestContext: requestContext, shownAt: shownAt, refresh: refresh,
+		selected: 0, focusFilter: true,
+	}
+	title := fmt.Sprintf("%s [%s - %s]", identitySelectionPrompt, branding.Name, selectionDisplayTime(shownAt))
+	window := mygo.NewWindow(mygo.WindowOptions{
+		Title: title, Parent: parent, Modal: parent != nil, AlwaysOnTop: true,
+		Width: 860, Height: 410, MinWidth: 820, MinHeight: 360, Hidden: true,
+		Content: ui.View(picker.view),
 	})
+	if window.IsDestroyed() {
+		return nil, ErrCancelled
+	}
+	picker.window = window
+	closed := make(chan guiSelectionResult, 1)
+	focusStopped := make(chan struct{})
+	focusFilter := func() {
+		window.Update(func() {
+			picker.focusFilter = true
+			acquirePickerNativeFocus(window)
+		})
+	}
+	window.OnClosed(func() {
+		close(focusStopped)
+		closed <- picker.result()
+	})
+	window.OnFocus(focusFilter)
+	if icon, err := guiassets.WindowIconPNG(); err == nil {
+		_ = window.SetIcon(icon)
+	}
+	s.mu.Lock()
+	select {
+	case <-s.stopped:
+		s.mu.Unlock()
+		window.Close()
+		return nil, ErrCancelled
+	default:
+		s.active = window
+		s.mu.Unlock()
+	}
+	// Show the modal as soon as it is created so its parent cannot stay blocked
+	// if the platform has already delivered MyGo's one-shot ready event.
+	window.Show()
+	window.Focus()
+	focusFilter()
+	// The native window may become active before its UI surface receives focus.
+	// Reapply the filter focus briefly instead of treating window activation as
+	// proof that the input field is ready for keyboard input.
+	go func() {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		timeout := time.NewTimer(750 * time.Millisecond)
+		defer timeout.Stop()
+		for {
+			select {
+			case <-focusStopped:
+				return
+			case <-timeout.C:
+				return
+			case <-ticker.C:
+				window.Focus()
+				focusFilter()
+			}
+		}
+	}()
+	stopClose := context.AfterFunc(ctx, window.Close)
+	defer stopClose()
 
 	var selection guiSelectionResult
 	select {
-	case selection = <-result:
+	case selection = <-closed:
 	case <-ctx.Done():
-		select {
-		case selection = <-result:
-		case <-s.stopped:
-			return nil, ErrCancelled
-		}
+		window.Close()
+		selection = <-closed
+	case <-s.stopped:
+		window.Close()
+		selection = <-closed
+	}
+	s.mu.Lock()
+	if s.active == window {
+		s.active = nil
+	}
+	s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	select {
 	case <-s.stopped:
 		return nil, ErrCancelled
+	default:
 	}
 	if selection.err != nil {
 		return nil, selection.err
@@ -177,237 +217,154 @@ type guiSelectionResult struct {
 	err      error
 }
 
-func guiNewSelectionWindow(
-	ctx context.Context,
-	identities []identity.Identity,
-	refreshIdentities func(context.Context) ([]identity.Identity, error),
-	requestContext SelectionContext,
-	shownAt time.Time,
-) (*unison.Window, func() (identity.Identity, bool), error) {
-	title := fmt.Sprintf("%s [%s - %s]", identitySelectionPrompt, branding.Name, selectionDisplayTime(shownAt))
-	window, err := unison.NewWindow(title, unison.FloatingWindowOption(), unison.NotResizableWindowOption())
-	if err != nil {
-		return nil, nil, fmt.Errorf("create identity selection window: %w", err)
-	}
-	if icons, iconErr := guiassets.TitleIcons(); iconErr == nil {
-		window.SetTitleIcons(icons)
-	}
-	content := window.Content()
-	content.SetBorder(unison.NewEmptyBorder(geom.NewUniformInsets(8)))
-	content.SetLayout(&unison.FlexLayout{Columns: 1, VSpacing: 5})
-
-	fingerprintFont := guistyle.MonospacedFont(9)
-	mutedInk := unison.RGB(104, 117, 134)
-	rowInk := unison.RGB(255, 255, 255)
-	detailsScroll := guiNewSelectionDetailsArea(window, requestContext, shownAt, rowInk)
-	content.AddChild(detailsScroll)
-
-	tableView := guiidentitytable.New(true)
-	tableView.SetSortable(false)
-	scroller := unison.NewScrollPanel()
-	tableView.AttachTo(scroller)
-	scroller.SetLayoutData(guiidentitytable.ScrollLayoutData(len(identities), 7))
-	content.AddChild(scroller)
-
-	footer := unison.NewPanel()
-	footer.SetLayout(&unison.FlexLayout{Columns: 2, HSpacing: 8, VAlign: align.Middle})
-	footer.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
-	status := unison.NewLabel()
-	status.Font = fingerprintFont
-	status.OnBackgroundInk = mutedInk
-	status.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true, VAlign: align.Middle})
-	footer.AddChild(status)
-
-	refreshButton := guistyle.NewRefreshButton()
-	refreshButton.SetEnabled(refreshIdentities != nil)
-	footer.AddChild(refreshButton)
-	content.AddChild(footer)
-
-	filter := unison.NewField()
-	filter.Font = fingerprintFont
-	filter.Watermark = "> " + identitySelectionFilterHint
-	filter.BackgroundInk = rowInk
-	filter.EditableInk = rowInk
-	filter.OnBackgroundInk = unison.RGB(28, 39, 56)
-	filter.OnEditableInk = unison.RGB(28, 39, 56)
-	filter.SelectionInk = unison.ThemeFocus
-	filter.OnSelectionInk = unison.ThemeOnFocus
-	unison.InstallFocusBorders(filter, filter,
-		unison.NewCompoundBorder(
-			unison.NewLineBorder(unison.ThemeFocus, geom.Size{}, geom.NewUniformInsets(1), false),
-			unison.NewEmptyBorder(geom.Insets{Top: 1, Left: 2, Bottom: 1, Right: 2}),
-		),
-		unison.NewCompoundBorder(
-			unison.NewLineBorder(unison.ThemeSurfaceEdge, geom.Size{}, geom.NewUniformInsets(1), false),
-			unison.NewEmptyBorder(geom.Insets{Top: 1, Left: 2, Bottom: 1, Right: 2}),
-		),
-	)
-	filter.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
-	content.AddChild(filter)
-
-	options := makeSearchableIdentityOptions(identities)
-	offeredIdentities := append([]identity.Identity(nil), identities...)
-	matches := matchIdentities(options, "")
-	var chosen identity.Identity
-	hasChosen := false
-	active := true
-	refreshChoices := func(query string) {
-		matches = matchIdentities(options, query)
-		entries := make([]guiidentitytable.Entry, 0, len(matches))
-		for _, match := range matches {
-			entries = append(entries, guiidentitytable.Entry{Identity: match.identity, Number: match.index + 1})
-		}
-		tableView.SetEntries(entries)
-		if len(matches) > 0 {
-			tableView.Table.SetLeadCell(0, -1)
-		}
-		status.SetTitle(fmt.Sprintf("%d/%d", len(matches), len(identities)))
-		status.Tooltip = nil
-		tableView.Table.MarkForLayoutAndRedraw()
-		scroller.MarkForLayoutAndRedraw()
-	}
-	moveSelection := func(delta int) {
-		if len(matches) == 0 {
-			return
-		}
-		selected := tableView.Table.LeadRowIndex()
-		if selected < 0 || selected >= len(matches) {
-			selected = 0
-		} else {
-			selected = (selected + delta + len(matches)) % len(matches)
-		}
-		tableView.Table.SetLeadCell(selected, -1)
-	}
-	selectCurrent := func() {
-		selected := tableView.Table.LeadRowIndex()
-		if selected >= 0 && selected < len(matches) {
-			chosen = matches[selected].identity
-			hasChosen = true
-			window.StopModal(unison.ModalResponseOK)
-		}
-	}
-	tableView.Table.DoubleClickCallback = selectCurrent
-	tableKeyDown := tableView.Table.KeyDownCallback
-	tableView.Table.KeyDownCallback = func(keyCode unison.KeyCode, modifiers mod.Modifiers, repeat bool) bool {
-		switch keyCode {
-		case unison.KeyReturn, unison.KeyNumPadEnter:
-			selectCurrent()
-			return true
-		case unison.KeyEscape:
-			window.StopModal(unison.ModalResponseCancel)
-			return true
-		default:
-			return tableKeyDown(keyCode, modifiers, repeat)
-		}
-	}
-	filter.ModifiedCallback = func(_, after *unison.FieldState) { refreshChoices(after.Text) }
-	filter.KeyDownCallback = func(keyCode unison.KeyCode, modifiers mod.Modifiers, repeat bool) bool {
-		switch keyCode {
-		case unison.KeyUp:
-			moveSelection(-1)
-			return true
-		case unison.KeyDown:
-			moveSelection(1)
-			return true
-		case unison.KeyReturn, unison.KeyNumPadEnter:
-			selectCurrent()
-			return true
-		case unison.KeyEscape:
-			window.StopModal(unison.ModalResponseCancel)
-			return true
-		case unison.KeyU:
-			if modifiers.ControlDown() {
-				filter.SetText("")
-				return true
-			}
-			return filter.DefaultKeyDown(keyCode, modifiers, repeat)
-		case unison.KeyC:
-			if modifiers.OSMenuCommandDown() && tableView.CopySelection() {
-				return true
-			}
-			return filter.DefaultKeyDown(keyCode, modifiers, repeat)
-		default:
-			return filter.DefaultKeyDown(keyCode, modifiers, repeat)
-		}
-	}
-	refreshChoices("")
-	refreshButton.ClickCallback = func() {
-		if refreshIdentities == nil {
-			return
-		}
-		refreshButton.SetEnabled(false)
-		go func() {
-			refreshCtx, cancel := context.WithTimeout(ctx, upstream.RequestTimeout)
-			defer cancel()
-			updated, refreshErr := refreshIdentities(refreshCtx)
-			unison.InvokeTask(func() {
-				if !window.IsValid() || !active {
-					return
-				}
-				refreshButton.SetEnabled(true)
-				if refreshErr != nil {
-					status.Tooltip = unison.NewTooltipWithText(refreshErr.Error())
-					status.MarkForRedraw()
-					return
-				}
-				status.Tooltip = nil
-				identities = guiAvailableIdentityMetadata(offeredIdentities, updated)
-				options = makeSearchableIdentityOptions(identities)
-				refreshChoices(filter.Text())
-				scroller.SetLayoutData(guiidentitytable.ScrollLayoutData(len(identities), 7))
-				contentRect := window.ContentRect()
-				contentRect.Height = guiSelectionWindowHeight(len(identities), fingerprintFont, requestContext)
-				window.SetContentRect(contentRect)
-				guiwindow.CenterOnPrimaryDisplay(window)
-			})
-		}()
-	}
-
-	window.SetContentRect(geom.NewRect(0, 0, 820, guiSelectionWindowHeight(len(identities), fingerprintFont, requestContext)))
-	content.ValidateLayout()
-	detailsScroll.SetPosition(0, math.MaxFloat32)
-	guiwindow.CenterOnPrimaryDisplay(window)
-	filter.RequestFocus()
-	return window, func() (identity.Identity, bool) {
-		active = false
-		return chosen, hasChosen
-	}, nil
+type guiPickerState struct {
+	ctx            context.Context
+	identities     []identity.Identity
+	offered        []identity.Identity
+	requestContext SelectionContext
+	shownAt        time.Time
+	refresh        func(context.Context) ([]identity.Identity, error)
+	selected       int
+	query          string
+	lastQuery      string
+	status         string
+	err            string
+	refreshing     bool
+	hasSelection   bool
+	chosen         identity.Identity
+	tableState     ui.ListState
+	window         *mygo.Window
+	focusFilter    bool
 }
 
-func guiNewSelectionDetailsArea(window *unison.Window, requestContext SelectionContext, shownAt time.Time, rowInk unison.Ink) *unison.ScrollPanel {
-	textInk := unison.RGB(28, 39, 56)
-	detailsFont := guiSelectionDetailsFont()
-
-	detailsField := unison.NewMultiLineField()
-	detailsField.Font = detailsFont
-	detailsField.SetText(guiSelectionDetailsText(requestContext, shownAt))
-	detailsField.BackgroundInk = rowInk
-	detailsField.OnBackgroundInk = textInk
-	detailsField.EditableInk = rowInk
-	detailsField.OnEditableInk = textInk
-	detailsField.SelectionInk = unison.ThemeFocus
-	detailsField.OnSelectionInk = unison.ThemeOnFocus
-	guistyle.MakeFieldReadOnly(detailsField)
-	readOnlyKeyDown := detailsField.KeyDownCallback
-	detailsField.KeyDownCallback = func(keyCode unison.KeyCode, modifiers mod.Modifiers, repeat bool) bool {
-		if keyCode == unison.KeyEscape {
-			window.StopModal(unison.ModalResponseCancel)
-			return true
-		}
-		return readOnlyKeyDown(keyCode, modifiers, repeat)
+func (p *guiPickerState) view(c *ui.Context) {
+	theme := guitable.CompactTheme(c)
+	root := ui.Column(c).Fill().Padding(theme.Space(2)).Gap(theme.Space(1.5))
+	if root.Shortcut(0, ui.KeyEscape) {
+		p.window.Close()
 	}
-	// Keep the field selectable and copyable while making its contents read-only.
-	unison.UninstallFocusBorders(detailsField, detailsField)
-	detailsField.SetBorder(unison.NewEmptyBorder(geom.NewUniformInsets(5)))
-
-	detailsScroll := unison.NewScrollPanel()
-	detailsScroll.BackgroundInk = rowInk
-	detailsScroll.SetBorder(unison.NewLineBorder(unison.RGB(220, 228, 238), geom.NewUniformSize(8), geom.NewUniformInsets(1), false))
-	detailsScroll.SetContent(detailsField, behavior.HintedFill, behavior.Fill)
-	detailsScroll.SetLayoutData(&unison.FlexLayoutData{
-		HAlign: align.Fill, VAlign: align.Fill, HGrab: true, SizeHint: geom.NewSize(780, guiSelectionDetailsTextAreaHeight(requestContext)),
+	root.Children(func() {
+		ui.Scroll(c).Height(theme.Space(36)).Border(1, theme.Border).Radius(theme.Space(1)).Padding(theme.Space(1.5)).Children(func() {
+			ui.Text(c, guiSelectionDetailsText(p.requestContext, p.shownAt)).FontSize(theme.Rem(0.82)).
+				Selectable()
+		})
+		if p.lastQuery != p.query {
+			p.selected = 0
+			p.lastQuery = p.query
+		}
+		matches := p.matches()
+		if len(matches) == 0 {
+			p.selected = -1
+		}
+		// Match the main window's key card around the picker table.
+		tableArea := ui.Column(c).Grow(1).MinHeight(theme.Space(37)).Padding(theme.Space(2.5)).
+			Background(theme.Surface).Border(1, theme.Border).Radius(theme.Space(3))
+		tableArea.Children(func() {
+			if len(matches) == 0 {
+				ui.Column(c).Grow(1).Center().Children(func() {
+					ui.Text(c, "No SSH keys match this filter.").TextColor(theme.TextMuted)
+				})
+			} else {
+				p.tableState.Selected = &p.selected
+				tableRows := make([]guitable.IdentityRow, len(matches))
+				for i, match := range matches {
+					tableRows[i] = guitable.IdentityRow{Identity: match.identity, Number: match.index + 1}
+				}
+				table := guitable.IdentityTable(c, &p.tableState, tableRows, true, false).
+					Grow(1).MinHeight(theme.Space(37))
+				table.ContextMenu(func(menu *ui.Menu) {
+					copyItem := menu.Item("Copy").Disabled(p.selected < 0 || p.selected >= len(matches)).
+						Shortcut(ui.Cmd, ui.KeyC)
+					if copyItem.Chosen() && p.selected >= 0 && p.selected < len(matches) {
+						mygo.Clipboard.WriteText(guiPickerIdentityCopyText(matches[p.selected].identity))
+					}
+				})
+				if table.Shortcut(ui.Cmd, ui.KeyC) && p.selected >= 0 && p.selected < len(matches) {
+					mygo.Clipboard.WriteText(guiPickerIdentityCopyText(matches[p.selected].identity))
+				}
+				if table.Submitted() {
+					p.choose(matches)
+				}
+			}
+		})
+		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, fmt.Sprintf("%d/%d", len(matches), len(p.identities))).FontSize(theme.Rem(0.9)).TextColor(theme.TextMuted)
+			if p.err != "" {
+				ui.Text(c, p.err).SingleLine().TextColor(theme.Danger).Grow(1)
+			} else if p.status != "" {
+				ui.Text(c, p.status).SingleLine().TextColor(theme.TextMuted).Grow(1)
+			} else {
+				ui.Spacer(c)
+			}
+			refresh := ui.PrimaryButton(c, "").Label("Refresh keys").Tooltip("Refresh keys").
+				Padding(0).Size(theme.Space(6), theme.Space(6)).Disabled(p.refresh == nil || p.refreshing)
+			refresh.Children(func() {
+				ui.Icon(c, guiPickerRefreshIcon).Size(theme.Space(3.5), theme.Space(3.5))
+			})
+			if refresh.Clicked() {
+				p.refreshKeys()
+			}
+		})
+		filter := ui.TextInput(c, &p.query).Label("Filter").Placeholder(identitySelectionFilterHint)
+		filter.AutoFocus()
+		if p.focusFilter {
+			filter.Focus()
+			p.focusFilter = false
+		}
+		if filter.Submitted() {
+			p.choose(matches)
+		}
 	})
-	return detailsScroll
+}
+
+func (p *guiPickerState) matches() []identityMatch {
+	return matchIdentities(makeSearchableIdentityOptions(p.identities), p.query)
+}
+
+func (p *guiPickerState) choose(matches []identityMatch) {
+	if p.selected < 0 || p.selected >= len(matches) {
+		return
+	}
+	p.chosen = matches[p.selected].identity
+	p.hasSelection = true
+	p.window.Close()
+}
+
+func (p *guiPickerState) result() guiSelectionResult {
+	if !p.hasSelection {
+		return guiSelectionResult{err: ErrCancelled}
+	}
+	return guiSelectionResult{identity: p.chosen}
+}
+
+func (p *guiPickerState) refreshKeys() {
+	if p.refresh == nil || p.refreshing {
+		return
+	}
+	p.refreshing = true
+	p.err, p.status = "", ""
+	p.window.Invalidate()
+	go func() {
+		refreshCtx, cancel := context.WithTimeout(p.ctx, upstream.RequestTimeout)
+		defer cancel()
+		updated, err := p.refresh(refreshCtx)
+		if p.window == nil || p.window.IsDestroyed() {
+			return
+		}
+		p.window.Update(func() {
+			p.refreshing = false
+			if err != nil {
+				p.err = err.Error()
+				return
+			}
+			p.identities = guiAvailableIdentityMetadata(p.offered, updated)
+			p.selected = 0
+			if len(p.identities) == 0 {
+				p.selected = -1
+			}
+			p.status = fmt.Sprintf("Refreshed %d available keys.", len(p.identities))
+		})
+	}()
 }
 
 func guiSelectionDetailsText(requestContext SelectionContext, shownAt time.Time) string {
@@ -428,29 +385,20 @@ func guiSelectionDetailsText(requestContext SelectionContext, shownAt time.Time)
 	return text.String()
 }
 
-func guiSelectionDetailsTextAreaHeight(requestContext SelectionContext) float32 {
-	return float32(guiSelectionDetailsVisibleLines(requestContext)+1)*guiSelectionDetailsFont().LineHeight() + 12
+func guiPickerIdentityCopyText(id identity.Identity) string {
+	comment := identity.DisplayText(id.Comment)
+	if comment == "" {
+		comment = "(no comment)"
+	}
+	return strings.Join([]string{
+		comment,
+		identity.DisplayText(id.Algorithm),
+		identity.DisplayBitSize(id.Blob, id.Algorithm),
+		identity.DisplayText(id.Fingerprint),
+	}, "\t")
 }
 
-func guiSelectionDetailsFont() unison.Font {
-	return guistyle.MonospacedFont(8.5)
-}
-
-func guiSelectionDetailsVisibleLines(requestContext SelectionContext) int {
-	return min(guiSelectionDetailsLineCount(requestContext), 5)
-}
-
-func guiSelectionDetailsLineCount(requestContext SelectionContext) int {
-	return len(selectionTreeLines(requestContext))
-}
-
-func guiSelectionWindowHeight(identityCount int, filterFont unison.Font, requestContext SelectionContext) float32 {
-	visibleRows := min(max(identityCount, 1), 7)
-	return float32(16) + guiSelectionDetailsTextAreaHeight(requestContext) + 5 + guiidentitytable.HeaderHeight +
-		float32(visibleRows)*guiidentitytable.RowHeight + 5 + 18 + 5 + filterFont.LineHeight() + 10
-}
-
-// guiAvailableIdentityMetadata refreshes display data without selecting keys the SSH client was not offered.
+// guiAvailableIdentityMetadata refreshes display data without selecting keys the SSH client did not offer.
 func guiAvailableIdentityMetadata(offered, current []identity.Identity) []identity.Identity {
 	currentByDigest := make(map[[32]byte]identity.Identity, len(current))
 	for _, id := range current {

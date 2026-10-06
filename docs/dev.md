@@ -5,11 +5,11 @@
 ## Architecture
 
 - `cmd/ssh-keyselect` implements the CLI and terminal SSH wrapper.
-- `cmd/ssh-keyselect-gui` implements GUI startup, endpoint configuration, status display, and the About dialog. It is built with the `gui` build tag and shipped beside the CLI executable.
+- `cmd/ssh-keyselect-gui` implements the MyGo native UI, app lifecycle, endpoint configuration, status display, and About surface. It is built with the `gui` build tag and shipped beside the CLI executable.
 - `internal/protocol` encodes and parses SSH Agent Protocol messages. `internal/agentproxy` exposes the selected identity and forwards permitted signing requests to the upstream agent.
 - `internal/listener` and `internal/upstream` implement frontend and upstream transports. `internal/transport` provides their shared mode names and endpoint comparisons.
-- `internal/selector` contains terminal and GUI identity pickers. Its selection interface always receives a `SelectionContext`, including an empty context when no host key was verified. `internal/guiidentitytable` shares key-row presentation and copy actions between the status window and picker, while `internal/guistyle` shares typography, button styling, and read-only field behavior.
-- `internal/guiwindow` shares primary-display window placement between GUI surfaces.
+- `internal/selector` contains terminal and MyGo native identity pickers. Its selection interface always receives a `SelectionContext`, including an empty context when no host key was verified.
+- `internal/guitable` shares identity table columns and alternating row styling between the main window and GUI picker.
 - `internal/config` reads and writes GUI TOML configuration. CLI `ssh`, `list`, and `test` commands resolve upstream defaults from flags and environment without loading that file.
 - `internal/credits` embeds the compact dependency list used by About. Full license texts are shipped in the root `CREDITS` file.
 
@@ -119,7 +119,7 @@ Upstream identity parsing validates the complete public-key blob with `ssh.Parse
 
 `internal/identity.DisplayText` replaces invalid UTF-8 with U+FFFD and maps Unicode control characters and characters with the [Bidi_Control property](https://www.unicode.org/Public/UCD/latest/ucd/PropList.txt) to ASCII spaces. This prevents public key metadata and local host hints from injecting terminal controls or explicit text-direction changes into surrounding UI text. Ordinary multilingual text, combining marks, and joining characters retain their spelling and glyph shaping.
 
-CLI identity tables, terminal picker rows, shared GUI key rows and their clipboard text, and both pickers' `known_hosts` hints use this sanitizer for comments, algorithms, and fingerprints. Sanitization applies to display strings; the identity retains the original agent comment for protocol responses. CLI and TUI tables cap comment columns at 36 characters, algorithm columns at 64, and fingerprint columns at 50. Truncation scans only to the column boundary and appends an ellipsis, preventing a single long comment from expanding every row's padding.
+CLI identity tables, terminal picker rows, native GUI key tables and their clipboard text, and both pickers' `known_hosts` hints use this sanitizer for comments, algorithms, and fingerprints. Sanitization applies to display strings; the identity retains the original agent comment for protocol responses. CLI and TUI tables cap comment columns at 36 characters, algorithm columns at 64, and fingerprint columns at 50. Truncation scans only to the column boundary and appends an ellipsis, preventing a single long comment from expanding every row's padding.
 
 GUI endpoint export commands use POSIX single-quote escaping, including embedded apostrophes. Paths containing command substitutions, variable references, backticks, or backslashes remain literal when pasted into a POSIX shell.
 
@@ -155,33 +155,27 @@ The CLI and GUI use the same endpoint comparison before binding. On Windows, nat
 
 The GUI stores and displays paths in platform-specific formats. On Windows, dialog paths are converted to or from the selected transport when opening or saving configuration. A Listen mode change closes and reopens the listener, attempting to restore the previous listener if rebinding fails.
 
-Configuration application runs on a worker that serializes listener shutdown and restart. Completion updates configuration and widgets on the UI thread only after successful application. Configuration actions are disabled while application is pending. The event loop stays available to finish cancelled picker tasks while server handlers drain. The exit callback stops the selector first, cancels the application context, and waits for server shutdown and owned socket cleanup before returning. Stopping the selector releases its waiters without further UI tasks, so shutdown can finish inside the callback. Desktop `unison.Start` does not return.
+Configuration application runs on a worker that serializes listener shutdown and restart. Completion updates configuration and MyGo UI state on the UI thread only after successful application. Configuration actions are disabled while application is pending. The event loop stays available to finish cancelled picker tasks while server handlers drain. MyGo's `OnWillQuit` handler stops the selector first, cancels the application context, and waits for server shutdown and owned socket cleanup before returning. Closing the native picker releases its waiting agent request so shutdown can finish while the UI loop is active.
 
 At GUI startup, an existing filesystem entry at the resolved Listen path leaves the proxy unconfigured. The preflight check prevents the listener from removing or replacing an existing socket file.
 
 ### GUI rendering and memory
 
-Enabled GUI logs are forwarded to stderr as they are written. Startup diagnostics retain only the latest 64 KiB, including when an individual write exceeds that limit, for the startup error dialog. Ongoing logging does not grow the diagnostic buffer or replay all logs at exit.
+The GUI uses MyGo's Go-only `ui` package. Views rebuild from application state, and its virtualized tables create visible rows on demand. Native windows do not start a WebView or load HTML or JavaScript. MyGo draws the UI with Metal on macOS, Direct3D 11 on Windows, and OpenGL on Linux; native file dialogs, menus, clipboard access, and tray integration use MyGo's platform APIs. Linux needs GTK 3 at runtime, and its tray integration additionally needs `libayatana-appindicator3`.
 
-GUI startup defaults `UNISON_CPU_RENDERING` to `1` before `unison.Start`. Unison then creates windows without OpenGL contexts and presents rasterized pixels through the platform's CPU drawing path. A small, mostly idle agent window benefits from avoiding driver initialization and GPU context allocations. An explicitly set environment variable takes precedence, including `UNISON_CPU_RENDERING=0` to request OpenGL.
+GUI logs use a stable writer so Settings can change the destination and level while the proxy is running. A configured file is appended with mode `0600`; missing parent directories are created with mode `0700`. An empty path uses stderr. Startup diagnostics retain only the latest 64 KiB, including when an individual write exceeds that limit, for the startup error message. Ongoing logging does not grow the diagnostic buffer or replay all logs at exit.
 
-`internal/guistyle.Font` uses Segoe UI on Windows, Helvetica Neue on macOS, and Noto Sans on Linux, with Unison's embedded label font as the fallback when the primary family is absent. These keep the mostly Latin UI from retaining CJK faces at startup. Unison chooses additional faces when text actually contains missing glyphs, including Japanese key comments and paths. Refresh, settings, and copy buttons use vector icons to avoid loading font faces just for symbols. Canvas retains loaded faces and parses their glyph tables eagerly, so selecting a CJK family for every label can dominate memory use even with CPU rendering. Go garbage collection cannot release those live faces. System font discovery can still cause a temporary startup peak while inspecting installed fonts.
-
-Shared sans-serif and monospace fonts use a 0.9 size scale to keep the new families visually compact. `guistyle.ConfigureFonts` applies it to Unison's default fonts before creating widgets, so fields, tooltips, and messages follow the same sizing. Pass nominal sizes to the shared font helpers; when preserving an existing font's actual size, use `FontFace.Font` directly to avoid scaling it twice. Set a widget's font before creating its title, since Unison text captures font metrics at that point.
-
-Compare separate processes with the same configuration, fonts, display scale, and window size when measuring memory. On Windows, Task Manager's Memory column and a process's private bytes measure different things; collect both and distinguish startup peaks from idle use. Go heap profiles do not include native graphics-driver allocations, so also check process memory and loaded graphics libraries when comparing rendering modes.
-
-A user-reported Windows check of a `just snapshot` build, with the main window visible 15 seconds after launch, measured 101.3 MB when launched by double-click and 97.6 MB with `UNISON_CPU_RENDERING=1`. The earlier 0.0.2 build measured 259.8 MB at startup with CPU rendering requested. These observations come from one environment; both updated launch methods request CPU rendering when no environment override is present, so the difference between them does not establish an additional benefit from setting the variable explicitly.
+Compare separate processes with the same configuration, display scale, and window size when measuring memory. On Windows, Task Manager's Memory column and a process's private bytes measure different things; collect both and distinguish startup peaks from idle use. Go heap profiles do not include native graphics allocations, so also check process memory when comparing builds.
 
 ### GUI assets
 
 `assets/ssh-keyselect-logo.png` is the source artwork. `just gen-platform-icons` creates the multi-size ICO, Linux desktop PNGs, and macOS ICNS under the ignored `assets/gui/generated/` directory. `just gen-windows-icons` also generates ignored Windows `.syso` resources under `assets/gui/generated/windows/`.
 
-Source artwork is decoded lazily once. The GUI also shares decoded title-bar images across windows, avoiding repeated scaling, encoding, and decoding when dialogs and pickers open.
+Source artwork is decoded lazily once. Requested icon sizes are generated from the embedded image for the app, window, and tray icons.
 
 Each Windows executable combines its icon and version information in one resource object because the Go linker accepts only one resource section per executable. `assets/gui/windows-cli-resources.json` and `assets/gui/windows-gui-resources.json` define the shared `SSH KeySelect` file description and product name, the project copyright notice, and each executable's original filename. Windows version resources use `go-winres`, pinned in `scripts/generate-windows-icons.sh` and `scripts/generate-windows-resource.sh`. GoReleaser's per-target hooks use the latter script to override both executables' file and product versions with `.Version`, then remove the temporary resource after each build. Local builds use `0.0.0.0`. The GUI's resource description also supplies its `SSH KeySelect` name in Task Manager.
 
-The main window title and tray tooltip include the displayed active Listen endpoint followed by ` - SSH KeySelect`. Both labels are refreshed when the Listen endpoint changes in Settings.
+The main window title and tray tooltip include the displayed active Listen endpoint followed by ` - SSH KeySelect`. Both labels are refreshed when the Listen endpoint changes in Settings. The main window's `StateKey` lets MyGo restore its position and size between launches.
 
 Because Go includes `.syso` files from a package directory, `just build`, `just snapshot`, `just release`, and release CI temporarily stage copies in the command directories and remove them after building.
 
@@ -205,9 +199,9 @@ Frontend timeout tests pass a 200 ms frame deadline to the shared serving and co
 
 Signing approval tests pass a 200 ms upstream setup deadline and withhold approval for 300 ms. This checks that signing waits can exceed the setup deadline, for both bound and unbound sessions, without waiting for the production 10-second deadline. The tests use real transport connections and also verify cancellation when the client disconnects.
 
-GUI settings and shutdown tests run the headless event loop with a real upstream agent and frontend connections. They apply settings while one picker is modal and another client waits, then check picker closure, old-client disconnection, and listener availability after both same-path and changed-path restarts. Quitting with pending picker requests must remove the owned socket before the exit callback returns and allow a new runtime to bind the same endpoint. Linux terminal tests use a real pseudoterminal to check context cancellation, the final newline after Escape, and input handoff to the next reader. Windows terminal tests cover both blocking inherited pipes and Go's overlapped pipes, checking that later input survives cancellation. The Unix foreign-directory permission test requires root and otherwise skips; it changes only a temporary fixture's owner.
+The GUI runtime integration check applies endpoint changes against real Unix sockets and verifies that the proxy moves to the replacement endpoint. Linux terminal tests use a real pseudoterminal to check context cancellation, the final newline after Escape, and input handoff to the next reader. Windows terminal tests cover both blocking inherited pipes and Go's overlapped pipes, checking that later input survives cancellation. The Unix foreign-directory permission test requires root and otherwise skips; it changes only a temporary fixture's owner.
 
-Run `just deps-credits` after changing Go dependencies or the supported target operating systems. It installs a pinned `go-licenses` into a temporary directory, scans Linux, macOS, and Windows builds with the GUI tag, and regenerates `internal/credits/dependencies.txt` and `CREDITS`. The scanner is used because it can report GUI-tagged and platform-specific imports in each build. Check the output for newly introduced or changed licenses. The generated `CREDITS` includes third-party license texts and the licenses for fonts embedded by Unison.
+Run `just deps-credits` after changing Go dependencies or the supported target operating systems. It installs a pinned `go-licenses` into a temporary directory, scans Linux, macOS, and Windows builds with the GUI tag, and regenerates `internal/credits/dependencies.txt` and `CREDITS`. The scanner is used because it can report GUI-tagged and platform-specific imports in each build. Check the output for newly introduced or changed licenses. The generated `CREDITS` includes third-party license texts for the modules used by shipped targets.
 
 ## Release packaging
 
@@ -225,6 +219,6 @@ RPM artifacts are signed by GitHub Actions using `RPM_SIGNING_KEY`; set `NFPM_PA
 
 ## Dependency license inventory
 
-The application project uses Apache-2.0. Third-party modules include MIT, BSD-2-Clause, BSD-3-Clause, and MPL-2.0 licensed packages; the compact About inventory and full notices are regenerated from the module graph for every shipped target. No source modifications to the MPL-2.0 dependencies are currently included. Keep their license notices in `CREDITS` when redistributing binaries.
+The application project uses Apache-2.0. Third-party modules include MIT, Apache-2.0, and BSD-3-Clause licensed packages; the compact About inventory and full notices are regenerated from the module graph for every shipped target. Keep their license notices in `CREDITS` when redistributing binaries.
 
 The repository's top-level license does not establish rights to separately sourced media assets. Track provenance for icons, fonts, and other non-code resources independently.

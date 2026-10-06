@@ -22,6 +22,15 @@ func guiDisplayEndpointPath(endpoint string) string {
 // guiEndpointPathFromDisplay leaves Unix paths unchanged after display formatting.
 func guiEndpointPathFromDisplay(endpoint string) string { return endpoint }
 
+func guiDisplayFilePath(path string) string {
+	if path == "" {
+		return ""
+	}
+	return filepath.Clean(path)
+}
+
+func guiFilePathFromDisplay(path string) string { return path }
+
 func guiListenPathForConfig(endpoint string) string { return endpoint }
 
 func guiNormalizeListenPathForMode(endpoint string, _ transport.Mode) string { return endpoint }

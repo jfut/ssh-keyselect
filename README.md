@@ -40,7 +40,7 @@ dnf install ssh-keyselect
 
 Start the GUI first, then set `SSH_AUTH_SOCK` to the Listen endpoint shown in its main window. On Linux and macOS, the default endpoint is `$HOME/.ssh/ssh-keyselect-agent.sock`.
 
-Select text in the socket path fields to copy a path or part of it. The Upstream copy icon copies `export UPSTREAM_SSH_AUTH_SOCK="..."`; the Listen icon copies `export SSH_AUTH_SOCK="..."`. Both use the displayed path without adding escapes. On Windows, paths are copied with native backslash separators.
+The Upstream and Listen cards show selectable socket paths. Their `Copy export command` buttons copy POSIX `export` assignments with shell-quoted paths. In PowerShell or Command Prompt, use the environment-variable commands shown below.
 
 For Git Bash ([Git for Windows](https://gitforwindows.org/)), macOS, and Linux:
 
@@ -68,7 +68,7 @@ set SSH_AUTH_SOCK=\\.\pipe\ssh-keyselect-agent.socket
 ssh user@example.org
 ```
 
-The GUI can start without an upstream agent. Open Settings from the gear button or File menu to configure the agent endpoints.
+The GUI can start without an upstream agent. Open Settings from the Settings button or File menu to configure the agent endpoints.
 
 If you changed the Windows Listen endpoint in Settings, use the endpoint shown in the GUI instead of the default named pipe above.
 
@@ -251,7 +251,7 @@ The terminal shows a blank line, `[ssh-keyselect - YYYY-MM-DD HH:MM:SS TZ]`, req
 
 ### Linux runtime requirements
 
-The Linux GUI requires X11 and OpenGL runtime libraries. Wayland sessions use XWayland.
+The Linux GUI requires GTK 3. A Linux system tray icon also requires `libayatana-appindicator3`; the main window works without it.
 
 ### Command options
 
@@ -278,7 +278,7 @@ Use `--config FILE` to select another file. Command-line values override file va
 - Environment variables and a leading `~` are expanded in configured paths using the GUI process environment.
 - If a filesystem entry already exists at the configured Listen path when the GUI starts, the proxy starts as `Not configured` and leaves that entry untouched.
 
-The configuration loader rejects unknown keys. Logging is off by default; set `log.level` in the TOML file or pass `--log-level` to enable it.
+The configuration loader rejects unknown keys. Logging is off by default. Set `log.level` to enable it and optionally set `log.file` to append logs to a file. When `log.file` is empty, logs go to standard error.
 
 Example configuration for Git Bash on Windows, using a Cygwin-compatible listener:
 
@@ -296,6 +296,7 @@ upstream_mode = "auto"
 listen_mode = "cygwin"
 
 [log]
+file = ""
 level = "off"
 ```
 
@@ -311,22 +312,22 @@ ssh user@example.org
 
 ### GUI controls
 
-- Open Settings from the gear button or File > Settings. Apply activates endpoint changes immediately; use File > Save to store them.
+- Open Settings from the Settings button or File > Settings. Apply activates endpoint and logging changes immediately; use File > Save to store them. Set the log level and optional log file in the Logging section. Leaving the file empty writes logs to standard error.
 - The File menu opens, saves, and saves as TOML configuration files. The GUI prompts before closing with unsaved changes.
-- About shows the subtitle `Selective SSH Agent Proxy`, project URL, author `Jun Futagawa (jfut)`, and third-party libraries and licenses in selectable text. Select text and press Ctrl+C (Command+C on macOS) to copy it.
+- About shows the application version and third-party library license inventory. Full license notices are included in `CREDITS`.
 - Release archives include full license notices in `CREDITS`.
 
 ### Auto Select
 
 Auto Select temporarily bypasses the per-connection picker. When On, the proxy returns every upstream identity and forwards signing requests for any of them. Any client that can access the proxy can then use every key in the upstream agent.
 
-The GUI has Off and On controls beside Agent Proxy. On is red and requires confirmation. Use it only for trusted work, then turn it Off. The setting is temporary, is not saved in TOML, and applies to new identity requests. A client that already received all identities while Auto Select was On keeps that selection until its connection closes.
+The GUI has an Auto Select switch beside Agent Proxy. Enabling it requires confirmation. Use it only for trusted work, then turn it off. The setting is temporary, is not saved in TOML, and applies to new identity requests. A client that already received all identities while Auto Select was on keeps that selection until its connection closes.
 
 ### GUI picker
 
 The window title combines the action, application name, and local display time. The request-context area begins with the same timestamp followed by host details. It lets you scroll to earlier hops. Use the arrow keys to move through matches, Enter to select, and Esc to cancel.
 
-The picker and main-window key table support copying a key. Right-click a key and choose Copy, or press Ctrl+C (Command+C on macOS), to copy its Comment, Type, Size, and Fingerprint as tab-separated text.
+Right-click a key row and choose `Copy`, or press Ctrl+C, to copy its Comment, Type, Size, and Fingerprint as tab-separated text.
 
 ## License
 

@@ -7,572 +7,729 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 
+	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
+	"github.com/jfut/ssh-keyselect/assets/gui"
 	"github.com/jfut/ssh-keyselect/internal/branding"
 	"github.com/jfut/ssh-keyselect/internal/config"
 	"github.com/jfut/ssh-keyselect/internal/listener"
 	"github.com/jfut/ssh-keyselect/internal/transport"
-	"github.com/richardwilkes/toolbox/v2/geom"
-	"github.com/richardwilkes/unison"
-	"github.com/richardwilkes/unison/enums/align"
-	"github.com/richardwilkes/unison/enums/mod"
-	"github.com/richardwilkes/unison/enums/paintstyle"
-	"github.com/richardwilkes/unison/enums/role"
 )
 
-type guiFileMenuActions struct {
-	enabled  func() bool
-	open     func()
-	save     func()
-	saveAs   func()
-	settings func()
-}
-
-type guiConfigState struct {
-	cfg                 config.Config
-	filePath            string
-	dirty               bool
-	applying            bool
-	actualListen        string
-	effectiveListenMode transport.Mode
-	runtime             *guiRuntime
-	onUpdate            func()
-	onDirtyChange       func()
-	onApplyingChange    func()
-}
-
-// configForDisk stores endpoint paths in the native format for this OS.
+// guiConfigForDisk stores endpoint paths in the native format for this OS.
 func guiConfigForDisk(cfg config.Config) config.Config {
 	cfg.Agent.Listen = guiListenPathForConfig(cfg.Agent.Listen)
 	return cfg
 }
 
-func (s *guiConfigState) apply(cfg config.Config, dirty bool, complete func(error)) {
-	if s.applying {
-		complete(errors.New("configuration is already being applied"))
+func (a *guiApp) applyConfig(cfg config.Config, dirty bool, complete func(error)) {
+	if a.applying {
+		if complete != nil {
+			complete(errors.New("configuration is already being applied"))
+		}
 		return
 	}
-	s.applying = true
-	if s.onApplyingChange != nil {
-		s.onApplyingChange()
+	a.applying = true
+	a.statusMessage = ""
+	a.updateConfigurationMenu()
+	window := a.mainWindow.Load()
+	if window != nil {
+		window.Invalidate()
 	}
-	// A cancelled picker may still need a UI task to close. Keep the event loop
-	// running while the worker drains the old server and rebinds its endpoint.
 	go func() {
-		actualListen, effectiveMode, err := s.runtime.Apply(cfg)
-		unison.InvokeTask(func() {
-			s.applying = false
-			if s.runtime.ctx.Err() != nil {
+		actualListen, effectiveMode, err := a.runtime.Apply(cfg)
+		if window == nil {
+			return
+		}
+		window.Update(func() {
+			a.applying = false
+			a.updateConfigurationMenu()
+			if a.ctx.Err() != nil {
 				return
-			}
-			if s.onApplyingChange != nil {
-				s.onApplyingChange()
 			}
 			if err == nil {
 				cfg.Agent.Upstream = config.ExpandPath(cfg.Agent.Upstream)
 				cfg.Agent.Listen = config.ExpandPath(cfg.Agent.Listen)
-				s.cfg = cfg
-				s.actualListen = actualListen
-				s.effectiveListenMode = effectiveMode
-				s.setDirty(dirty)
-				if s.onUpdate != nil {
-					s.onUpdate()
+				cfg.Log.File = config.ExpandPath(cfg.Log.File)
+				a.cfg = cfg
+				a.actualListen = actualListen
+				a.listenMode = effectiveMode
+				a.dirty = dirty
+				a.statusMessage = ""
+				if actualListen == "" {
+					a.statusMessage = "Listen endpoint is unavailable or already in use."
 				}
+				a.updateWindowTitle()
+				a.refreshIdentities()
+			} else {
+				a.statusMessage = "Could not apply configuration: " + err.Error()
 			}
-			complete(err)
+			if complete != nil {
+				complete(err)
+			}
+			if a.window != nil {
+				a.window.Invalidate()
+			}
 		})
 	}()
 }
 
-func (s *guiConfigState) setDirty(dirty bool) {
-	if s.dirty == dirty {
-		return
-	}
-	s.dirty = dirty
-	if s.onDirtyChange != nil {
-		s.onDirtyChange()
-	}
-}
-
-func (s *guiConfigState) save() error {
-	if err := config.Save(s.filePath, guiConfigForDisk(s.cfg)); err != nil {
+func (a *guiApp) saveCurrentConfig() error {
+	if err := config.Save(a.configPath, guiConfigForDisk(a.cfg)); err != nil {
 		return err
 	}
-	s.setDirty(false)
+	a.dirty = false
+	a.updateWindowTitle()
 	return nil
 }
 
-func (s *guiConfigState) open() {
-	if s.applying {
+func (a *guiApp) openConfiguration() {
+	if a.applying {
 		return
 	}
-	path, ok := guiChooseConfigToOpen(s.filePath)
-	if !ok {
-		return
-	}
-	if s.dirty {
-		switch guiConfirmSaveBeforeOpen(s.filePath) {
-		case unison.ModalResponseOK:
-			if err := s.save(); err != nil {
-				showGUIErrorDialog("Could not save configuration.", err)
+	a.showMainWindow()
+	parent, currentPath, currentCfg, dirty := a.window, a.configPath, a.cfg, a.dirty
+	go func() {
+		path, err := guiChooseConfigToOpen(parent, currentPath)
+		if err != nil {
+			mygo.Dialog.Error("Could not open configuration.", err.Error())
+			return
+		}
+		if path == "" {
+			return
+		}
+		saved := false
+		if dirty {
+			result, err := mygo.Dialog.Message(mygo.MessageOptions{
+				Parent: parent, Type: mygo.MessageQuestion, Title: branding.Name,
+				Message: "Save changes before opening another configuration?",
+				Detail:  guiDisplayEndpointPath(currentPath),
+				Buttons: []string{"Cancel", "Discard", "Save"}, CancelButton: 0, DefaultButton: 2,
+			})
+			if err != nil || result.Button == 0 {
 				return
 			}
-		case unison.ModalResponseDiscard:
-		default:
-			return
-		}
-	}
-	cfg, err := config.Load(path)
-	if err != nil {
-		showGUIErrorDialog("Could not open configuration.", err)
-		return
-	}
-	s.apply(cfg, false, func(err error) {
-		if err != nil {
-			showGUIErrorDialog("Could not apply configuration.", err)
-			return
-		}
-		s.filePath = path
-	})
-}
-
-func (s *guiConfigState) saveAs() {
-	path, ok := guiChooseConfigToSave(s.filePath)
-	if !ok {
-		return
-	}
-	if err := config.Save(path, guiConfigForDisk(s.cfg)); err != nil {
-		showGUIErrorDialog("Could not save configuration.", err)
-		return
-	}
-	s.filePath = path
-	s.setDirty(false)
-}
-
-// confirmSaveBeforeOpen asks whether to save before replacing the active configuration.
-func guiConfirmSaveBeforeOpen(path string) int {
-	return guiRunUnsavedChangesDialog("Save changes before opening another configuration?", path, []*unison.DialogButtonInfo{
-		unison.NewCancelButtonInfo(),
-		unison.NewNoButtonInfo(),
-		unison.NewYesButtonInfo(),
-	})
-}
-
-// confirmSaveBeforeClose puts the close actions in Yes, No, Cancel order.
-func guiConfirmSaveBeforeClose(path string) int {
-	return guiRunUnsavedChangesDialog("Save changes before closing?", path, []*unison.DialogButtonInfo{
-		unison.NewYesButtonInfo(),
-		unison.NewNoButtonInfo(),
-		unison.NewCancelButtonInfo(),
-	})
-}
-
-func guiRunUnsavedChangesDialog(message, path string, buttons []*unison.DialogButtonInfo) int {
-	messagePanel := unison.NewMessagePanel(message, guiDisplayEndpointPath(path))
-	guiSetMessagePanelRegularFonts(messagePanel)
-	dialog, err := newGUIDialog(
-		branding.Name,
-		unison.DefaultDialogTheme.QuestionIcon,
-		unison.DefaultDialogTheme.QuestionIconInk,
-		messagePanel,
-		buttons,
-	)
-	if err != nil {
-		return unison.ModalResponseCancel
-	}
-	return dialog.RunModal()
-}
-
-// setMessagePanelRegularFonts gives save prompts regular GUI text without changing their font sizes.
-func guiSetMessagePanelRegularFonts(panel *unison.Panel) {
-	for _, child := range panel.Children() {
-		label, ok := child.Self.(*unison.Label)
-		if !ok {
-			continue
-		}
-		title := label.String()
-		label.Font = unison.LabelFont.Face().Font(label.Font.Size())
-		label.SetTitle(title)
-	}
-}
-
-func (s *guiConfigState) saveFromMenu() {
-	if err := s.save(); err != nil {
-		showGUIErrorDialog("Could not save configuration.", err)
-	}
-}
-
-// menuItemContentWidth measures the part of a menu item occupied by its title and shortcut.
-func guiMenuItemContentWidth(item unison.MenuItem) float32 {
-	theme := unison.DefaultMenuItemTheme
-	width := unison.NewText(item.Title(), &unison.TextDecoration{Font: theme.TitleFont}).Width()
-	binding := item.KeyBinding()
-	if binding.KeyCode != 0 {
-		keys := binding.String()
-		if keys != "" {
-			width += theme.KeyGap + unison.NewText(keys, &unison.TextDecoration{Font: theme.KeyFont}).Width()
-		}
-	}
-	return width
-}
-
-// padMenuTitleToWidth gives an in-window menu title enough invisible trailing space to match a wider menu.
-func guiPadMenuTitleToWidth(title string, width float32) string {
-	font := unison.DefaultMenuItemTheme.TitleFont
-	for unison.NewText(title, &unison.TextDecoration{Font: font}).Width() < width {
-		title += " "
-	}
-	return title
-}
-
-// styleGUIInWindowMenuBar paints the menu bar's unused space white, including the scroll panel behind its menus.
-func styleGUIInWindowMenuBar(root *unison.Panel) {
-	if root == nil {
-		return
-	}
-	for _, child := range root.Children() {
-		if child.Accessibility.Role != role.MenuBar {
-			continue
-		}
-		child.DrawCallback = func(canvas *unison.Canvas, rect geom.Rect) {
-			canvas.DrawRect(rect, guiMenuInk.Paint(canvas, rect, paintstyle.Fill))
-		}
-		for _, barChild := range child.Children() {
-			if scroll, ok := barChild.Self.(*unison.ScrollPanel); ok {
-				scroll.BackgroundInk = guiMenuInk
-				break
-			}
-		}
-		break
-	}
-}
-
-// installGUIFileMenu adds configuration file actions alongside Exit and About.
-func installGUIFileMenu(window *unison.Window, actions guiFileMenuActions) {
-	factory := unison.DefaultMenuFactory()
-	if root := window.Content().Parent(); root != nil {
-		root.DrawCallback = func(canvas *unison.Canvas, rect geom.Rect) {
-			canvas.DrawRect(rect, guiCardInk.Paint(canvas, rect, paintstyle.Fill))
-		}
-	}
-	factory.BarForWindow(window, func(bar unison.Menu) {
-		canConfigure := func(unison.MenuItem) bool { return actions.enabled() }
-		file := factory.NewMenu(unison.UserBaseID+20, "File", nil)
-		file.InsertItem(-1, factory.NewItem(unison.UserBaseID+24, "Open...", unison.KeyBinding{KeyCode: unison.KeyO, Modifiers: mod.Control}, canConfigure,
-			func(unison.MenuItem) { actions.open() }))
-		file.InsertItem(-1, factory.NewItem(unison.UserBaseID+25, "Save", unison.KeyBinding{KeyCode: unison.KeyS, Modifiers: mod.Control}, canConfigure,
-			func(unison.MenuItem) { actions.save() }))
-		file.InsertItem(-1, factory.NewItem(unison.UserBaseID+26, "Save As...", unison.KeyBinding{KeyCode: unison.KeyS, Modifiers: mod.Control | mod.Shift}, canConfigure,
-			func(unison.MenuItem) { actions.saveAs() }))
-		file.InsertSeparator(-1, true)
-		file.InsertItem(-1, factory.NewItem(unison.UserBaseID+27, "Settings", unison.KeyBinding{}, canConfigure,
-			func(unison.MenuItem) { actions.settings() }))
-		file.InsertSeparator(-1, true)
-		file.InsertItem(-1, factory.NewItem(unison.UserBaseID+21, "Exit", unison.KeyBinding{}, nil,
-			func(unison.MenuItem) { unison.AttemptQuit() }))
-		bar.InsertMenu(-1, file)
-
-		help := factory.NewMenu(unison.UserBaseID+22, "Help", nil)
-		aboutTitle := "About"
-		if factory.BarIsPerWindow() {
-			var widestFileItem float32
-			for i := range file.Count() {
-				if item := file.ItemAtIndex(i); !item.IsSeparator() {
-					widestFileItem = max(widestFileItem, guiMenuItemContentWidth(item))
+			if result.Button == 2 {
+				if err := config.Save(currentPath, guiConfigForDisk(currentCfg)); err != nil {
+					mygo.Dialog.Error("Could not save configuration.", err.Error())
+					return
 				}
+				saved = true
 			}
-			aboutTitle = guiPadMenuTitleToWidth(aboutTitle, widestFileItem)
 		}
-		help.InsertItem(-1, factory.NewItem(unison.UserBaseID+23, aboutTitle, unison.KeyBinding{}, nil,
-			func(unison.MenuItem) { showGUIAboutDialog() }))
-		bar.InsertMenu(-1, help)
+		cfg, err := config.Load(path)
+		if err != nil {
+			mygo.Dialog.Error("Could not open configuration.", err.Error())
+			if saved && parent != nil {
+				parent.Update(func() {
+					a.dirty = false
+					a.updateWindowTitle()
+				})
+			}
+			return
+		}
+		if parent == nil || parent.IsDestroyed() {
+			return
+		}
+		parent.Update(func() {
+			if saved {
+				a.dirty = false
+			}
+			a.applyConfig(cfg, false, func(applyErr error) {
+				if applyErr == nil {
+					a.configPath = path
+					a.dirty = false
+					a.updateWindowTitle()
+				}
+			})
+		})
+	}()
+}
+
+func (a *guiApp) saveAsConfiguration() {
+	if a.applying {
+		return
+	}
+	a.showMainWindow()
+	parent, currentPath, cfg := a.window, a.configPath, a.cfg
+	go func() {
+		path, err := guiChooseConfigToSave(parent, currentPath)
+		if err != nil || path == "" {
+			if err != nil {
+				mygo.Dialog.Error("Could not save configuration.", err.Error())
+			}
+			return
+		}
+		if err := config.Save(path, guiConfigForDisk(cfg)); err != nil {
+			mygo.Dialog.Error("Could not save configuration.", err.Error())
+			return
+		}
+		if parent != nil && !parent.IsDestroyed() {
+			parent.Update(func() {
+				a.configPath = path
+				a.dirty = false
+				a.statusMessage = "Configuration saved."
+				a.updateWindowTitle()
+			})
+		}
+	}()
+}
+
+func (a *guiApp) saveConfigurationFromMenu() {
+	if a.applying {
+		return
+	}
+	if err := a.saveCurrentConfig(); err != nil {
+		a.statusMessage = "Could not save configuration: " + err.Error()
+	} else {
+		a.statusMessage = "Configuration saved."
+	}
+	if a.window != nil {
+		a.window.Invalidate()
+	}
+}
+
+func (a *guiApp) applicationMenu() *mygo.Menu {
+	fileItems := []*mygo.MenuItem{
+		{ID: "config.open", Label: "Open Configuration…", Accelerator: "CmdOrCtrl+O", Click: func(*mygo.MenuItem, *mygo.Window) { a.openConfiguration() }},
+		{ID: "config.save", Label: "Save Configuration", Accelerator: "CmdOrCtrl+S", Click: func(*mygo.MenuItem, *mygo.Window) { a.saveConfigurationFromMenu() }},
+		{ID: "config.save-as", Label: "Save Configuration As…", Accelerator: "CmdOrCtrl+Shift+S", Click: func(*mygo.MenuItem, *mygo.Window) { a.saveAsConfiguration() }},
+		mygo.Separator(),
+		{ID: "settings.open", Label: "Settings…", Accelerator: "CmdOrCtrl+,", Click: func(*mygo.MenuItem, *mygo.Window) { a.openSettings() }},
+		mygo.Separator(),
+		{Role: mygo.RoleQuit},
+	}
+	helpItems := []*mygo.MenuItem{
+		{ID: "about.open", Label: "About", Click: func(*mygo.MenuItem, *mygo.Window) { a.showAbout() }},
+	}
+	items := []*mygo.MenuItem{
+		{Role: mygo.RoleAppMenu},
+		{Label: "File", Submenu: fileItems},
+	}
+	if runtime.GOOS == "darwin" {
+		items = append(items, &mygo.MenuItem{Role: mygo.RoleEditMenu}, &mygo.MenuItem{Role: mygo.RoleWindowMenu})
+	}
+	items = append(items, &mygo.MenuItem{Label: "Help", Submenu: helpItems})
+	return mygo.NewMenu(items)
+}
+
+func (a *guiApp) trayMenu() *mygo.Menu {
+	a.trayAutoSelect = &mygo.MenuItem{
+		ID: "tray.auto-select", Label: "Auto Select", Type: mygo.MenuItemCheckbox,
+		Checked: a.server.AutoSelect(),
+		ToolTip: "Allow clients to use every upstream identity.",
+		Click: func(item *mygo.MenuItem, _ *mygo.Window) {
+			if item.IsChecked() {
+				a.showMainWindow()
+				a.confirmAutoSelect = true
+				a.window.Invalidate()
+				item.SetChecked(false)
+				return
+			}
+			a.autoSelect = false
+			a.server.SetAutoSelect(false)
+			a.updateTrayAutoSelect()
+			if a.window != nil {
+				a.window.Invalidate()
+			}
+		},
+	}
+	return mygo.NewMenu([]*mygo.MenuItem{
+		{ID: "tray.show", Label: "Show SSH KeySelect", Click: func(*mygo.MenuItem, *mygo.Window) { a.showMainWindow() }},
+		mygo.Separator(),
+		a.trayAutoSelect,
+		{ID: "tray.settings", Label: "Settings…", Click: func(*mygo.MenuItem, *mygo.Window) { a.openSettings() }},
+		mygo.Separator(),
+		{Role: mygo.RoleQuit},
 	})
-	if factory.BarIsPerWindow() {
-		if root := window.Content().Parent(); root != nil {
-			styleGUIInWindowMenuBar(root)
+}
+
+func (a *guiApp) updateConfigurationMenu() {
+	if a == nil {
+		return
+	}
+	menu := mygo.App.Menu()
+	if menu == nil {
+		return
+	}
+	enabled := !a.applying
+	for _, id := range []string{"config.open", "config.save", "config.save-as", "settings.open"} {
+		if item := menu.ItemByID(id); item != nil {
+			item.SetEnabled(enabled)
 		}
 	}
 }
 
-// chooseConfigToOpen asks for a TOML file to load.
-func guiChooseConfigToOpen(currentPath string) (string, bool) {
-	dialog := unison.NewOpenDialog()
-	dialog.SetCanChooseFiles(true)
-	dialog.SetCanChooseDirectories(false)
-	dialog.SetAllowedExtensions("toml")
+// guiChooseConfigToOpen asks the native file dialog to choose a TOML file.
+func guiChooseConfigToOpen(parent *mygo.Window, currentPath string) (string, error) {
+	defaultPath := ""
 	if currentPath != "" {
-		dialog.SetInitialDirectory(filepath.Dir(currentPath))
+		defaultPath = filepath.Dir(currentPath)
 	}
-	if !dialog.RunModal() {
-		return "", false
+	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Parent: parent, Title: "Open Configuration", DefaultPath: defaultPath,
+		Filters: []mygo.FileFilter{{Name: "TOML configuration", Extensions: []string{"toml"}}},
+	})
+	if err != nil || len(paths) == 0 {
+		return "", err
 	}
-	return dialog.Path(), true
+	return paths[0], nil
 }
 
-// chooseConfigToSave asks where to save a TOML file and normalizes its extension.
-func guiChooseConfigToSave(currentPath string) (string, bool) {
-	dialog := unison.NewSaveDialog()
-	dialog.SetAllowedExtensions("toml")
+// guiChooseConfigToSave uses the native save dialog and keeps TOML file names explicit.
+func guiChooseConfigToSave(parent *mygo.Window, currentPath string) (string, error) {
+	defaultPath := ""
 	if currentPath != "" {
-		dialog.SetInitialDirectory(filepath.Dir(currentPath))
-		dialog.SetInitialFileName(filepath.Base(currentPath))
+		defaultPath = currentPath
 	}
-	if !dialog.RunModal() {
-		return "", false
+	path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
+		Parent: parent, Title: "Save Configuration", DefaultPath: defaultPath,
+		Filters: []mygo.FileFilter{{Name: "TOML configuration", Extensions: []string{"toml"}}},
+	})
+	if err != nil || path == "" {
+		return "", err
 	}
-	path, ok := unison.ValidateSaveFilePath(dialog.Path(), "toml", false)
-	return path, ok
+	ext := filepath.Ext(path)
+	if ext == "" {
+		path += ".toml"
+	} else if !strings.EqualFold(ext, ".toml") {
+		return "", fmt.Errorf("configuration file must use the .toml extension")
+	}
+	return path, nil
 }
 
-// editGUIEndpointSettings groups each endpoint's path and transport settings in the Settings dialog.
-func editGUIEndpointSettings(cfg config.Config) (config.Config, bool, error) {
-	content := unison.NewPanel()
-	content.SetLayout(&unison.FlexLayout{Columns: 1, VSpacing: 10})
-	content.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
+type guiSettingsState struct {
+	app                *guiApp
+	window             *mygo.Window
+	cfg                config.Config
+	upstreamPath       string
+	listenPath         string
+	logFile            string
+	upstreamMode       string
+	listenMode         string
+	logLevel           string
+	initialListenMode  transport.Mode
+	previousListenMode string
+	lastFilesystemPath string
+	applying           bool
+	browsingUpstream   bool
+	browsingListen     bool
+	browsingLog        bool
+	err                string
+}
 
-	upstreamPath := unison.NewField()
-	upstreamPath.Watermark = "Leave blank to configure later"
-	upstreamPath.SetText(guiDisplayEndpointPath(cfg.Agent.Upstream))
-	upstreamMode := guiNewTransportModePopup(cfg.Agent.UpstreamMode, true)
-	listenPath := unison.NewField()
+func (a *guiApp) openSettings() {
+	if a.applying {
+		return
+	}
+	a.showMainWindow()
+	state, err := newGUISettingsState(a, a.cfg)
+	if err != nil {
+		mygo.Dialog.Error("Could not open settings.", err.Error())
+		return
+	}
+	window := mygo.NewWindow(mygo.WindowOptions{
+		Title: "Settings", Parent: a.window, Modal: true,
+		Width: 600, Height: 430, MinWidth: 580, MinHeight: 410,
+		Content: ui.View(state.view),
+	})
+	state.window = window
+	if icon, iconErr := guiassets.WindowIconPNG(); iconErr == nil {
+		_ = window.SetIcon(icon)
+	}
+	window.OnClose(func(event *mygo.CloseEvent) {
+		if state.applying {
+			event.PreventDefault()
+		}
+	})
+}
+
+func newGUISettingsState(app *guiApp, cfg config.Config) (*guiSettingsState, error) {
 	listenEndpoint := cfg.Agent.Listen
-	if cfg.Agent.Listen == "" {
+	if listenEndpoint == "" {
 		defaultPath, _, err := guiDefaultListenEndpoint(cfg.Agent.Upstream, cfg.Agent.ListenMode)
 		if err != nil {
-			return config.Config{}, false, err
+			return nil, err
 		}
 		listenEndpoint = defaultPath
-		listenPath.SetText(guiDisplayEndpointPath(defaultPath))
-	} else {
-		listenPath.SetText(guiDisplayEndpointPath(cfg.Agent.Listen))
 	}
 	initialListenMode := cfg.Agent.ListenMode
 	if initialListenMode == transport.Auto {
 		resolvedMode, err := listener.ResolveMode(listenEndpoint, cfg.Agent.Upstream, transport.Auto)
 		if err != nil {
-			return config.Config{}, false, err
+			return nil, err
 		}
 		initialListenMode = resolvedMode
 		if initialListenMode == transport.Auto {
 			initialListenMode = transport.Unix
 		}
 	}
-	listenMode := guiNewTransportModePopup(initialListenMode, false)
-
-	upstreamGroup := newGUIEndpointConfigGroup("Upstream")
-	upstreamRows := newGUIEndpointConfigRows()
-	upstreamBrowse := guiNewEndpointBrowseButton()
-	upstreamPathControls := guiNewEndpointPathControls(upstreamPath, upstreamBrowse)
-	addGUIConfigRow(upstreamRows, "Socket path", upstreamPathControls)
-	addGUIConfigRow(upstreamRows, "Mode", upstreamMode)
-	upstreamGroup.AddChild(upstreamRows)
-	content.AddChild(upstreamGroup)
-
-	listenGroup := newGUIEndpointConfigGroup("Listen")
-	listenRows := newGUIEndpointConfigRows()
-	listenBrowse := guiNewEndpointBrowseButton()
-	listenPathControls := guiNewEndpointPathControls(listenPath, listenBrowse)
-	addGUIConfigRow(listenRows, "Socket path", listenPathControls)
-	addGUIConfigRow(listenRows, "Mode", listenMode)
-	listenGroup.AddChild(listenRows)
-	content.AddChild(listenGroup)
-
-	// Keep a usable filesystem path when users switch to and from the named-pipe transport.
-	lastFilesystemListenPath := ""
-	if !guiEndpointPathIsPipe(listenEndpoint) {
-		lastFilesystemListenPath = listenEndpoint
-	}
-	previousListenMode := guiSelectedModeValue(listenMode)
-	resettingListenMode := false
-	currentUpstreamEndpoint := func() (string, error) {
-		return guiEndpointPathFromDialog(guiEndpointPathFromDisplay(upstreamPath.Text()), guiSelectedModeValue(upstreamMode), cfg.Agent.Upstream)
-	}
-	updateUpstreamBrowse := func() {
-		upstreamBrowse.SetEnabled(!guiEndpointPathIsPipe(upstreamPath.Text()) && guiSelectedModeValue(upstreamMode) != transport.NamedPipe)
-	}
-	upstreamMode.SelectionChangedCallback = func(*unison.PopupMenu[string]) { updateUpstreamBrowse() }
-	upstreamPath.ModifiedCallback = func(_, _ *unison.FieldState) { updateUpstreamBrowse() }
-
-	upstreamBrowse.ClickCallback = func() {
-		path, ok, err := guiChooseEndpointPath(upstreamPath.Text(), guiSelectedModeValue(upstreamMode), "", false)
-		if err != nil {
-			showGUIErrorDialog("Could not select upstream socket path.", err)
-			return
-		}
-		if ok {
-			upstreamPath.SetText(guiDisplayEndpointPath(path))
-		}
-	}
-	listenBrowse.ClickCallback = func() {
-		upstreamEndpoint, err := currentUpstreamEndpoint()
-		if err != nil {
-			showGUIErrorDialog("Could not resolve the upstream endpoint.", err)
-			return
-		}
-		path, ok, err := guiChooseEndpointPath(listenPath.Text(), guiSelectedModeValue(listenMode), upstreamEndpoint, true)
-		if err != nil {
-			showGUIErrorDialog("Could not select listen socket path.", err)
-			return
-		}
-		if ok {
-			listenPath.SetText(guiDisplayEndpointPath(path))
-			lastFilesystemListenPath = path
-		}
-	}
-
-	updateListenBrowse := func() {
-		listenBrowse.SetEnabled(!guiEndpointPathIsPipe(listenPath.Text()) && guiSelectedModeValue(listenMode) != transport.NamedPipe)
-	}
-	listenPath.ModifiedCallback = func(_, _ *unison.FieldState) { updateListenBrowse() }
-	listenMode.SelectionChangedCallback = func(popup *unison.PopupMenu[string]) {
-		if resettingListenMode {
-			return
-		}
-		selected := guiSelectedModeValue(popup)
-		upstreamEndpoint, err := currentUpstreamEndpoint()
-		if err != nil {
-			showGUIErrorDialog("Could not resolve the upstream endpoint.", err)
-			resettingListenMode = true
-			popup.Select(string(previousListenMode))
-			resettingListenMode = false
-			return
-		}
-		if selected == transport.NamedPipe && !guiEndpointPathIsPipe(listenPath.Text()) {
-			lastFilesystemListenPath, err = guiEndpointPathFromDialog(guiEndpointPathFromDisplay(listenPath.Text()), previousListenMode, upstreamEndpoint)
-			if err != nil {
-				showGUIErrorDialog("Could not preserve the filesystem socket path.", err)
-				resettingListenMode = true
-				popup.Select(string(previousListenMode))
-				resettingListenMode = false
-				return
+	listenMode := guiDisplayModeName(initialListenMode)
+	upstreamMode := guiDisplayModeName(cfg.Agent.UpstreamMode)
+	return &guiSettingsState{
+		app: app, cfg: cfg,
+		upstreamPath: guiDisplayEndpointPath(cfg.Agent.Upstream),
+		listenPath:   guiDisplayEndpointPath(listenEndpoint),
+		logFile:      guiDisplayFilePath(cfg.Log.File),
+		upstreamMode: upstreamMode, listenMode: listenMode, logLevel: strings.ToLower(cfg.Log.Level),
+		initialListenMode: initialListenMode, previousListenMode: listenMode,
+		lastFilesystemPath: func() string {
+			if guiEndpointPathIsPipe(listenEndpoint) {
+				return ""
 			}
-			pipe, _, err := guiDefaultListenEndpoint(upstreamEndpoint, transport.NamedPipe)
-			if err != nil {
-				showGUIErrorDialog("Could not create an OpenSSH pipe endpoint.", err)
-				resettingListenMode = true
-				popup.Select(string(previousListenMode))
-				resettingListenMode = false
-				return
-			}
-			listenPath.SetText(guiDisplayEndpointPath(pipe))
-		} else if selected != transport.NamedPipe && guiEndpointPathIsPipe(listenPath.Text()) {
-			path := lastFilesystemListenPath
-			if path == "" {
-				path, _, err = guiDefaultListenEndpoint(upstreamEndpoint, selected)
-				if err != nil {
-					showGUIErrorDialog("Could not create a filesystem socket endpoint.", err)
-					resettingListenMode = true
-					popup.Select(string(previousListenMode))
-					resettingListenMode = false
-					return
-				}
-			} else {
-				path, err = guiEndpointPathFromDialog(guiEndpointPathForDialog(path), selected, upstreamEndpoint)
-				if err != nil {
-					showGUIErrorDialog("Could not restore the filesystem socket path.", err)
-					resettingListenMode = true
-					popup.Select(string(previousListenMode))
-					resettingListenMode = false
-					return
-				}
-			}
-			listenPath.SetText(guiDisplayEndpointPath(path))
-			lastFilesystemListenPath = path
-		} else if selected != transport.NamedPipe {
-			lastFilesystemListenPath, err = guiEndpointPathFromDialog(guiEndpointPathFromDisplay(listenPath.Text()), selected, upstreamEndpoint)
-			if err != nil {
-				showGUIErrorDialog("Could not update the filesystem socket path.", err)
-				resettingListenMode = true
-				popup.Select(string(previousListenMode))
-				resettingListenMode = false
-				return
-			}
-		}
-		previousListenMode = selected
-		updateListenBrowse()
-	}
-	updateUpstreamBrowse()
-	updateListenBrowse()
+			return listenEndpoint
+		}(),
+	}, nil
+}
 
-	dialog, err := newGUIDialog("Settings", nil, nil, content, []*unison.DialogButtonInfo{
-		unison.NewCancelButtonInfo(),
-		unison.NewOKButtonInfoWithTitle("Apply"),
+func (s *guiSettingsState) view(c *ui.Context) {
+	if c.Shortcut(0, ui.KeyEscape) && s.window != nil {
+		s.window.Close()
+		return
+	}
+	theme := c.Theme()
+	ui.Column(c).Fill().Padding(theme.Space(1.5), theme.Space(2)).
+		Gap(theme.Space(1.5)).Background(ui.Hex("#f5f8fc")).Children(func() {
+		s.endpointSection(c, theme, "Upstream", true)
+		s.endpointSection(c, theme, "Listen", false)
+		s.loggingSection(c, theme)
+		if s.err != "" {
+			ui.Text(c, s.err).TextColor(theme.Danger)
+		}
+		if s.applying {
+			ui.Text(c, "Applying configuration…").TextColor(theme.TextMuted)
+		}
+		guiDialogActionFooter(c, theme, func() {
+			cancel := guiDialogActionButton(c, "Cancel", false, s.applying)
+			if cancel.Clicked() {
+				s.window.Close()
+			}
+			apply := guiDialogActionButton(c, "Apply", true, s.applying || s.browsingListen || s.browsingUpstream || s.browsingLog)
+			if apply.Clicked() {
+				s.apply()
+			}
+		})
 	})
+}
+
+// endpointSection keeps each socket path and transport choice in a compact group.
+func (s *guiSettingsState) endpointSection(c *ui.Context, theme *ui.Theme, title string, upstream bool) {
+	path, mode := &s.listenPath, &s.listenMode
+	browsing := s.browsingListen
+	if upstream {
+		path, mode, browsing = &s.upstreamPath, &s.upstreamMode, s.browsingUpstream
+	}
+	section := ui.Column(c).Shrink(0).Gap(theme.Space(1)).
+		Padding(theme.Space(1.5), theme.Space(2)).
+		Border(1, ui.Hex("#dce4ee")).Radius(theme.Space(2)).Background(ui.Hex("#ffffff"))
+	section.Children(func() {
+		ui.Text(c, title).FontWeight(500)
+		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "Socket path").Width(theme.Space(19)).Shrink(0)
+			input := ui.TextInput(c, path).Label("Socket path").Grow(1)
+			if upstream {
+				input.Placeholder("Leave blank to configure later")
+			}
+			browse := ui.Button(c, "Browse…").Disabled(guiEndpointPathIsPipe(*path) || browsing || guiModeFromDisplay(*mode) == transport.NamedPipe)
+			if browse.Clicked() {
+				s.browse(upstream)
+			}
+		})
+		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "Mode").Width(theme.Space(19)).Shrink(0)
+			if ui.Select(c, mode, guiTransportModeOptions(upstream)).Label("Mode").Grow(1).Changed() {
+				if upstream {
+					s.err = ""
+				} else {
+					s.changeListenMode()
+				}
+			}
+		})
+	})
+}
+
+// loggingSection exposes both the optional file destination and the active log level.
+func (s *guiSettingsState) loggingSection(c *ui.Context, theme *ui.Theme) {
+	section := ui.Column(c).Shrink(0).Gap(theme.Space(1)).
+		Padding(theme.Space(1.5), theme.Space(2)).
+		Border(1, ui.Hex("#dce4ee")).Radius(theme.Space(2)).Background(ui.Hex("#ffffff"))
+	section.Children(func() {
+		ui.Text(c, "Logging").FontWeight(500)
+		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "Log file").Width(theme.Space(19)).Shrink(0)
+			ui.TextInput(c, &s.logFile).Label("Log file").Placeholder("Leave blank to log to standard error").Grow(1)
+			browse := ui.Button(c, "Browse…").Disabled(s.browsingLog)
+			if browse.Clicked() {
+				s.browseLogFile()
+			}
+		})
+		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "Level").Width(theme.Space(19)).Shrink(0)
+			ui.Select(c, &s.logLevel, []string{"off", "debug", "info", "warn", "error"}).Label("Log level").Grow(1)
+		})
+	})
+}
+
+func (s *guiSettingsState) changeListenMode() {
+	selected := guiModeFromDisplay(s.listenMode)
+	previous := guiModeFromDisplay(s.previousListenMode)
+	upstreamEndpoint, err := s.upstreamEndpoint()
 	if err != nil {
-		return config.Config{}, false, err
+		s.listenMode = s.previousListenMode
+		s.err = "Could not resolve the upstream endpoint: " + err.Error()
+		return
 	}
-	if dialog.RunModal() != unison.ModalResponseOK {
-		return config.Config{}, false, nil
-	}
-	upstreamModeValue, ok := upstreamMode.Selected()
-	if !ok {
-		return config.Config{}, false, errGUINoTransportMode
-	}
-	listenModeValue, ok := listenMode.Selected()
-	if !ok {
-		return config.Config{}, false, errGUINoTransportMode
-	}
-	upstreamEndpoint := ""
-	if cfg.Agent.Upstream != "" && upstreamPath.Text() == guiDisplayEndpointPath(cfg.Agent.Upstream) &&
-		transport.Mode(upstreamModeValue) == cfg.Agent.UpstreamMode {
-		upstreamEndpoint = cfg.Agent.Upstream
-	} else {
-		upstreamEndpoint, err = guiEndpointPathFromDialog(guiEndpointPathFromDisplay(upstreamPath.Text()), transport.Mode(upstreamModeValue), cfg.Agent.Upstream)
+	switch {
+	case selected == transport.NamedPipe && !guiEndpointPathIsPipe(s.listenPath):
+		if !guiEndpointPathIsPipe(s.listenPath) {
+			s.lastFilesystemPath, err = guiEndpointPathFromDialog(
+				guiEndpointPathFromDisplay(s.listenPath), previous, upstreamEndpoint)
+			if err != nil {
+				s.listenMode = s.previousListenMode
+				s.err = "Could not preserve the filesystem socket path: " + err.Error()
+				return
+			}
+		}
+		path, _, pathErr := guiDefaultListenEndpoint(upstreamEndpoint, transport.NamedPipe)
+		if pathErr != nil {
+			s.listenMode = s.previousListenMode
+			s.err = "Could not create an OpenSSH pipe endpoint: " + pathErr.Error()
+			return
+		}
+		s.listenPath = guiDisplayEndpointPath(path)
+	case selected != transport.NamedPipe && guiEndpointPathIsPipe(s.listenPath):
+		path := s.lastFilesystemPath
+		if path == "" {
+			path, _, err = guiDefaultListenEndpoint(upstreamEndpoint, selected)
+		} else {
+			path, err = guiEndpointPathFromDialog(guiEndpointPathForDialog(path), selected, upstreamEndpoint)
+		}
 		if err != nil {
-			return config.Config{}, false, err
+			s.listenMode = s.previousListenMode
+			s.err = "Could not restore a filesystem socket endpoint: " + err.Error()
+			return
+		}
+		s.listenPath = guiDisplayEndpointPath(path)
+		s.lastFilesystemPath = path
+	case selected != transport.NamedPipe:
+		s.lastFilesystemPath, err = guiEndpointPathFromDialog(
+			guiEndpointPathFromDisplay(s.listenPath), selected, upstreamEndpoint)
+		if err != nil {
+			s.listenMode = s.previousListenMode
+			s.err = "Could not update the filesystem socket path: " + err.Error()
+			return
 		}
 	}
-	selectedListenMode := transport.Mode(listenModeValue)
-	if cfg.Agent.ListenMode == transport.Auto && selectedListenMode == initialListenMode {
-		selectedListenMode = transport.Auto
+	s.previousListenMode = s.listenMode
+	s.err = ""
+}
+
+func (s *guiSettingsState) upstreamEndpoint() (string, error) {
+	if s.upstreamPath == "" {
+		return "", nil
 	}
-	if cfg.Agent.Listen != "" && listenPath.Text() == guiDisplayEndpointPath(cfg.Agent.Listen) && selectedListenMode == cfg.Agent.ListenMode {
+	return guiEndpointPathFromDialog(
+		guiEndpointPathFromDisplay(s.upstreamPath),
+		guiModeFromDisplay(s.upstreamMode),
+		s.cfg.Agent.Upstream,
+	)
+}
+
+func (s *guiSettingsState) buildConfig() (config.Config, error) {
+	cfg := s.cfg
+	upstreamMode := guiModeFromDisplay(s.upstreamMode)
+	upstreamEndpoint := ""
+	if s.upstreamPath != "" {
+		if s.upstreamPath == guiDisplayEndpointPath(cfg.Agent.Upstream) && upstreamMode == cfg.Agent.UpstreamMode {
+			upstreamEndpoint = cfg.Agent.Upstream
+		} else {
+			var err error
+			upstreamEndpoint, err = guiEndpointPathFromDialog(
+				guiEndpointPathFromDisplay(s.upstreamPath), upstreamMode, cfg.Agent.Upstream)
+			if err != nil {
+				return config.Config{}, err
+			}
+		}
+	}
+	listenMode := guiModeFromDisplay(s.listenMode)
+	if cfg.Agent.ListenMode == transport.Auto && listenMode == s.initialListenMode {
+		listenMode = transport.Auto
+	}
+	listenEndpoint := ""
+	if cfg.Agent.Listen != "" && s.listenPath == guiDisplayEndpointPath(cfg.Agent.Listen) && listenMode == cfg.Agent.ListenMode {
 		listenEndpoint = cfg.Agent.Listen
 	} else {
-		listenEndpoint, err = guiEndpointPathFromDialog(guiEndpointPathFromDisplay(listenPath.Text()), selectedListenMode, upstreamEndpoint)
+		var err error
+		listenEndpoint, err = guiEndpointPathFromDialog(
+			guiEndpointPathFromDisplay(s.listenPath), listenMode, upstreamEndpoint)
 		if err != nil {
-			return config.Config{}, false, err
+			return config.Config{}, err
 		}
 	}
 	cfg.Agent.Upstream = upstreamEndpoint
-	cfg.Agent.UpstreamMode = transport.Mode(upstreamModeValue)
+	cfg.Agent.UpstreamMode = upstreamMode
 	cfg.Agent.Listen = listenEndpoint
-	cfg.Agent.ListenMode = selectedListenMode
-	return cfg, true, nil
+	cfg.Agent.ListenMode = listenMode
+	cfg.Log.File = config.ExpandPath(guiFilePathFromDisplay(s.logFile))
+	cfg.Log.Level = s.logLevel
+	if err := cfg.Validate(); err != nil {
+		return config.Config{}, err
+	}
+	return cfg, nil
 }
 
-func guiChooseEndpointPath(current string, mode transport.Mode, upstream string, save bool) (string, bool, error) {
+// browseLogFile chooses where the GUI appends its diagnostic log.
+func (s *guiSettingsState) browseLogFile() {
+	s.browsingLog = true
+	window := s.window
+	current := guiFilePathFromDisplay(s.logFile)
+	go func() {
+		path, err := guiChooseLogFile(window, current)
+		if window == nil || window.IsDestroyed() {
+			return
+		}
+		window.Update(func() {
+			s.browsingLog = false
+			if err != nil {
+				s.err = err.Error()
+			} else if path != "" {
+				s.logFile = guiDisplayFilePath(path)
+				s.err = ""
+			}
+		})
+	}()
+}
+
+// guiChooseLogFile uses the native save dialog and adds the conventional suffix when omitted.
+func guiChooseLogFile(parent *mygo.Window, currentPath string) (string, error) {
+	path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
+		Parent: parent, Title: "Choose a log file", DefaultPath: currentPath,
+		Filters: []mygo.FileFilter{{Name: "Log files", Extensions: []string{"log"}}},
+	})
+	if err != nil || path == "" {
+		return "", err
+	}
+	if filepath.Ext(path) == "" {
+		path += ".log"
+	}
+	return path, nil
+}
+
+func (s *guiSettingsState) apply() {
+	cfg, err := s.buildConfig()
+	if err != nil {
+		s.err = err.Error()
+		return
+	}
+	s.err = ""
+	s.applying = true
+	s.app.applyConfig(cfg, true, func(err error) {
+		s.applying = false
+		if err != nil {
+			s.err = err.Error()
+			s.window.Invalidate()
+			return
+		}
+		s.window.Close()
+	})
+}
+
+func (s *guiSettingsState) browse(upstream bool) {
+	path, mode, endpoint := s.listenPath, guiModeFromDisplay(s.listenMode), ""
+	if upstream {
+		path, mode = s.upstreamPath, guiModeFromDisplay(s.upstreamMode)
+	} else {
+		var err error
+		endpoint, err = s.upstreamEndpoint()
+		if err != nil {
+			s.err = err.Error()
+			return
+		}
+	}
+	if upstream {
+		s.browsingUpstream = true
+	} else {
+		s.browsingListen = true
+	}
+	window := s.window
+	go func() {
+		chosen, ok, err := guiChooseEndpointPath(window, path, mode, endpoint, !upstream)
+		if window == nil || window.IsDestroyed() {
+			return
+		}
+		window.Update(func() {
+			s.browsingUpstream = false
+			s.browsingListen = false
+			if err != nil {
+				s.err = err.Error()
+			} else if ok {
+				if upstream {
+					s.upstreamPath = guiDisplayEndpointPath(chosen)
+				} else {
+					s.listenPath = guiDisplayEndpointPath(chosen)
+					s.lastFilesystemPath = chosen
+				}
+				s.err = ""
+			}
+		})
+	}()
+}
+
+func guiTransportModeOptions(includeAuto bool) []string {
+	modes := []transport.Mode{transport.Cygwin, transport.NamedPipe, transport.Unix, transport.WSL1}
+	options := make([]string, 0, len(modes)+1)
+	if includeAuto {
+		options = append(options, guiDisplayModeName(transport.Auto))
+	}
+	for _, mode := range modes {
+		options = append(options, guiDisplayModeName(mode))
+	}
+	return options
+}
+
+func guiModeFromDisplay(label string) transport.Mode {
+	for _, mode := range []transport.Mode{transport.Auto, transport.Cygwin, transport.NamedPipe, transport.Unix, transport.WSL1} {
+		if guiDisplayModeName(mode) == label {
+			return mode
+		}
+	}
+	return transport.Auto
+}
+
+func guiChooseEndpointPath(parent *mygo.Window, current string, mode transport.Mode, upstream string, save bool) (string, bool, error) {
 	initialPath := guiEndpointPathForDialog(guiEndpointPathFromDisplay(current))
 	initialDirectory := guiEndpointDialogInitialDirectory(initialPath)
 	if save {
-		dialog := unison.NewSaveDialog()
-		if initialDirectory != "" {
-			dialog.SetInitialDirectory(initialDirectory)
-		}
 		name := filepath.Base(initialPath)
 		if initialPath == "" || name == "." || name == string(filepath.Separator) {
 			name = "ssh-keyselect-agent.sock"
 		}
-		dialog.SetInitialFileName(name)
-		if !dialog.RunModal() {
-			return "", false, nil
+		path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
+			Parent: parent, Title: "Choose a socket path",
+			DefaultPath: filepath.Join(initialDirectory, name),
+			ButtonLabel: "Choose",
+		})
+		if err != nil || path == "" {
+			return "", false, err
 		}
-		path, err := guiEndpointPathFromDialog(dialog.Path(), mode, upstream)
-		return path, err == nil, err
+		resolved, err := guiEndpointPathFromDialog(path, mode, upstream)
+		return resolved, err == nil, err
 	}
-	dialog := unison.NewOpenDialog()
-	dialog.SetCanChooseFiles(true)
-	dialog.SetCanChooseDirectories(false)
-	if initialDirectory != "" {
-		dialog.SetInitialDirectory(initialDirectory)
+	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Parent: parent, Title: "Choose a socket path",
+		DefaultPath: initialDirectory,
+	})
+	if err != nil || len(paths) == 0 {
+		return "", false, err
 	}
-	if !dialog.RunModal() {
-		return "", false, nil
-	}
-	path, err := guiEndpointPathFromDialog(dialog.Path(), mode, upstream)
-	return path, err == nil, err
+	resolved, err := guiEndpointPathFromDialog(paths[0], mode, upstream)
+	return resolved, err == nil, err
 }
 
 func guiEndpointDialogInitialDirectory(path string) string {
@@ -595,88 +752,3 @@ func guiEndpointDialogInitialDirectory(path string) string {
 	}
 	return ""
 }
-
-func guiSelectedModeValue(popup *unison.PopupMenu[string]) transport.Mode {
-	value, ok := popup.Selected()
-	if !ok {
-		return transport.Auto
-	}
-	return transport.Mode(value)
-}
-
-func newGUIEndpointConfigGroup(title string) *unison.Panel {
-	group := newGUIStatusCard()
-	group.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
-	heading := unison.NewLabel()
-	heading.Font = guiFont(10, false)
-	heading.OnBackgroundInk = guiTextInk
-	heading.SetTitle(title)
-	group.AddChild(heading)
-	return group
-}
-
-func newGUIEndpointConfigRows() *unison.Panel {
-	rows := unison.NewPanel()
-	rows.SetLayout(&unison.FlexLayout{Columns: 2, HSpacing: 12, VSpacing: 8, VAlign: align.Middle})
-	rows.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
-	return rows
-}
-
-func guiNewEndpointPathControls(field *unison.Field, browse *unison.Button) *unison.Panel {
-	controls := unison.NewPanel()
-	controls.SetLayout(&unison.FlexLayout{Columns: 2, HSpacing: 6, VAlign: align.Middle})
-	field.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true, MinSize: geom.NewSize(320, 0)})
-	controls.AddChild(field)
-	browse.SetLayoutData(&unison.FlexLayoutData{VAlign: align.Middle})
-	controls.AddChild(browse)
-	return controls
-}
-
-func guiNewEndpointBrowseButton() *unison.Button {
-	button := unison.NewButton()
-	button.Font = guiFont(10.5, false)
-	button.SetTitle("Browse…")
-	button.Tooltip = unison.NewTooltipWithText("Choose a socket path")
-	return button
-}
-
-func guiNewTransportModePopup(current transport.Mode, includeAutomatic bool) *unison.PopupMenu[string] {
-	popup := unison.NewPopupMenu[string]()
-	// Keep the selected value and the expanded menu on the same font.
-	popup.Font = unison.DefaultMenuItemTheme.TitleFont
-	popup.ItemRendererCallback = func(mode string) string {
-		return guiDisplayModeName(transport.Mode(mode))
-	}
-	items := []string{}
-	if includeAutomatic {
-		items = append(items, string(transport.Auto))
-	}
-	items = append(items,
-		string(transport.Cygwin),
-		string(transport.NamedPipe),
-		string(transport.Unix),
-		string(transport.WSL1),
-	)
-	popup.AddItem(items...)
-	if popup.IndexOfItem(string(current)) < 0 {
-		if includeAutomatic {
-			current = transport.Auto
-		} else {
-			current = transport.Unix
-		}
-	}
-	popup.Select(string(current))
-	return popup
-}
-
-func addGUIConfigRow(panel *unison.Panel, title string, control unison.Paneler) {
-	label := unison.NewLabel()
-	label.Font = guiFont(10, false)
-	label.OnBackgroundInk = guiTextInk
-	label.SetTitle(title)
-	panel.AddChild(label)
-	control.AsPanel().SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
-	panel.AddChild(control)
-}
-
-var errGUINoTransportMode = errors.New("transport mode is not selected")

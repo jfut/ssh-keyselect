@@ -11,7 +11,7 @@ credits_workdir="$(mktemp -d)"
 trap 'rm -rf "$credits_workdir"' EXIT
 mkdir -p "$credits_workdir/bin"
 
-# Scan every released operating system with the GUI build tag, which pulls in Unison and its embedded fonts.
+# Scan each released operating system with the GUI build tag so platform-specific MyGo dependencies are included.
 GOBIN="$credits_workdir/bin" go install github.com/google/go-licenses@v1.6.0
 go_licenses="$credits_workdir/bin/go-licenses"
 
@@ -60,17 +60,14 @@ awk -v root="$root_module" '
 
 {
 	printf 'Go standard library: BSD-3-Clause\n'
-	printf 'Roboto font (bundled by Unison): Apache-2.0\n'
-	printf 'DejaVu Sans Mono font (bundled by Unison): Bitstream Vera / DejaVu Fonts License\n'
 	while IFS=$'\t' read -r module version license _; do
 		printf '%s %s: %s\n' "$module" "$version" "$license"
 	done < "$credits_workdir/dependencies.tsv"
 } > internal/credits/dependencies.txt
 
-IFS=$'\t' read -r unison_dir unison_version < <(GOFLAGS=-tags=gui go list -m -f '{{printf "%s\t%s" .Dir .Version}}' github.com/richardwilkes/unison)
 {
 	printf 'ssh-keyselect third-party license notices\n'
-	printf 'The project license is in LICENSE. These notices cover dependencies and bundled font resources.\n\n'
+	printf 'The project license is in LICENSE. These notices cover third-party dependencies.\n\n'
 	printf 'Go standard library: BSD-3-Clause\nhttps://go.dev/LICENSE\n----------------------------------------------------------------\n'
 	cat "$(go env GOROOT)/LICENSE"
 	while IFS=$'\t' read -r module version license url; do
@@ -89,8 +86,4 @@ IFS=$'\t' read -r unison_dir unison_version < <(GOFLAGS=-tags=gui go list -m -f 
 		fi
 		cat "$license_file"
 	done < "$credits_workdir/dependencies.tsv"
-	printf '\n\nRoboto font (bundled by Unison): Apache-2.0\nhttps://github.com/richardwilkes/unison/tree/%s/resources/fonts\n----------------------------------------------------------------\n' "$unison_version"
-	cat "$unison_dir/resources/fonts/Roboto License.txt"
-	printf '\n\nDejaVu Sans Mono font (bundled by Unison): Bitstream Vera / DejaVu Fonts License\nhttps://github.com/richardwilkes/unison/tree/%s/resources/fonts\n----------------------------------------------------------------\n' "$unison_version"
-	cat "$unison_dir/resources/fonts/DejaVu Sans Mono License.txt"
 } > CREDITS

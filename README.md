@@ -9,30 +9,79 @@ Selective SSH Agent Proxy
 [![Tag](https://img.shields.io/github/tag/jfut/ssh-keyselect.svg)](https://github.com/jfut/ssh-keyselect/releases)
 [![License](https://img.shields.io/badge/license-Apache%202-blue)](https://github.com/jfut/ssh-keyselect/blob/main/LICENSE)
 
-`SSH KeySelect` is an interactive SSH agent proxy that lets you choose which keys an SSH client can offer from your existing agent. Private keys stay in your existing agent, and the proxy rejects signing requests for unselected keys. This helps prevent unintended key use and reduces the risk of reaching an SSH server's `MaxAuthTries` limit.
+`SSH KeySelect` is an interactive SSH agent proxy. It lets you choose which keys an SSH client can offer from your existing agent.
 
-> [!IMPORTANT]
-> This project is experimental and under active development. Its interfaces, configuration options, and behavior may change as the project evolves.
+Private keys stay in your existing agent. The proxy rejects signing requests for unselected keys, helping prevent unintended key use and reducing the risk of reaching an SSH server's `MaxAuthTries` limit.
+
+## Overview
+
+### SSH connections from your machine
+
+SSH clients that use the `SSH_AUTH_SOCK` environment variable can use KeySelect when connecting to an SSH server. That includes direct use of `ssh` and OpenSSH launched by `git`, `rsync`, or the VS Code `Remote - SSH` extension.
+
+The client requests available identities, and the picker controls which ones it receives. When the client needs a signature, KeySelect forwards the request to the upstream agent. Private key material stays there.
+
+### Through agent forwarding
+
+With agent forwarding and Auto Select Off, a remote process such as Git or a nested SSH client uses its forwarded `SSH_AUTH_SOCK`. Its requests travel through the SSH connection to your local SSH client and KeySelect. The picker runs locally, and permitted signing requests go to your local upstream agent.
+
+> [!WARNING]
+> SSH agent forwarding keeps private keys on your machine, but lets a remote host request signatures from your agent. A malicious or compromised host can use forwarded keys to access SSH services and Git hosts reachable with your credentials, including reading or pushing to repositories. Forward your agent only to hosts you trust. See the [OpenSSH manual](https://man.openbsd.org/ssh) for its warning about agent forwarding.
 
 ## Installation
 
-Download an archive for Windows, macOS, or Linux from [Releases](https://github.com/jfut/ssh-keyselect/releases). Each archive includes the standalone `ssh-keyselect-gui` application and `ssh-keyselect` for terminal use.
+### Windows, macOS, and Linux
 
-On RHEL-compatible Linux distributions, you can also download an RPM from [Releases](https://github.com/jfut/ssh-keyselect/releases) and install it directly, or configure the repository for DNF-managed installation.
+1. Download an archive from [Releases](https://github.com/jfut/ssh-keyselect/releases). It includes the standalone `ssh-keyselect-gui` application and `ssh-keyselect` for terminal use.
+2. Extract it into a directory you control. Keep `LICENSE` and `CREDITS` with the executables.
+3. Add the executable directory to `PATH` to run the CLI or GUI from a terminal. On Windows, executable names end in `.exe`.
+4. On macOS, launch `ssh-keyselect-gui.app` from Finder or move it to your Applications folder.
+
+Windows release executables are currently unsigned. See the [Code signing policy](#code-signing-policy) for the planned signing scope and current status.
+
+SSH KeySelect does not install a background service or enable automatic startup. It creates its Listen endpoint while running.
+
+### Linux GUI runtime requirements
+
+The Linux GUI requires GTK 3. A system tray icon also requires `libayatana-appindicator3`; the main window works without it.
+
+### Other Linux package formats
+
+Releases also include native packages for Debian and Ubuntu (`.deb`), Alpine Linux (`.apk`), and Arch Linux (`.pkg.tar.zst`). Termux packages are provided as `.deb` files. Download the package for your architecture from [Releases](https://github.com/jfut/ssh-keyselect/releases) and install it with `apt`, `apk`, or `pacman`, as appropriate.
+
+The Alpine `.apk` is unsigned. Download `checksums.txt` with the package and verify the package checksum before installing it. Replace the example filename below with the exact `.apk` asset you downloaded:
+
+```sh
+apk_file=ssh-keyselect_VERSION_ARCH.apk
+grep -F "  $apk_file" checksums.txt | sha256sum -c
+sudo apk add --allow-untrusted "./$apk_file"
+```
+
+### RHEL-compatible Linux distributions
+
+Download an RPM from [Releases](https://github.com/jfut/ssh-keyselect/releases) and install it directly, or configure the repository for DNF-managed installation.
+
+RPM installation places the executables in `/usr/bin` and installs a desktop launcher, icons, and license notices in system directories. Run RPM and repository setup commands with administrative privileges.
 
 To install a downloaded RPM:
 
 ```bash
-dnf install ./ssh-keyselect*.rpm
+# x86_64
+dnf install ./ssh-keyselect-x.y.z-n.x86_64.rpm
+
+# aarch64
+dnf install ./ssh-keyselect-x.y.z-n.aarch64.rpm
 ```
 
-To configure the repository, first install [dnf-plugin-anyrepo](https://github.com/jfut/dnf-plugin-anyrepo), then run:
+To configure the repository, first install [dnf-plugin-anyrepo](https://github.com/jfut/dnf-plugin-anyrepo), then run the commands below. They add jfut's public signing key to the RPM keyring, register an AnyRepo repository, and install the package.
 
 ```bash
 rpm --import https://raw.githubusercontent.com/jfut/ssh-keyselect/refs/heads/main/RPM-GPG-KEY-jfut-github
 dnf-anyrepo add https://github.com/jfut/ssh-keyselect
 dnf install ssh-keyselect
 ```
+
+See [Uninstallation](#uninstallation) for removal instructions.
 
 ## Quick start
 
@@ -42,7 +91,7 @@ Start the GUI first, then set `SSH_AUTH_SOCK` to the Listen endpoint shown in it
 
 The Upstream and Listen cards show selectable socket paths. Their `Copy export command` buttons copy POSIX `export` assignments with shell-quoted paths. In PowerShell or Command Prompt, use the environment-variable commands shown below.
 
-For Git Bash ([Git for Windows](https://gitforwindows.org/)), macOS, and Linux:
+For Git Bash ([Git for Windows](https://gitforwindows.org/)), macOS, and Linux, start the GUI and set `SSH_AUTH_SOCK` to its default Listen endpoint:
 
 ```bash
 ssh-keyselect-gui &
@@ -50,12 +99,12 @@ export SSH_AUTH_SOCK="$HOME/.ssh/ssh-keyselect-agent.sock"
 ssh user@example.org
 ```
 
-For Windows OpenSSH, set the GUI's Listen mode to Named Pipe. Its default endpoint is `\\.\pipe\ssh-keyselect-agent.socket`.
+For Windows OpenSSH, set the GUI's Listen mode to Named Pipe. The default endpoint is `\\.\pipe\ssh-keyselect-agent.socket`.
 
 For Windows PowerShell:
 
 ```powershell
-Start-Process .\ssh-keyselect-gui.exe
+Start-Process ssh-keyselect-gui.exe
 $env:SSH_AUTH_SOCK = "\\.\pipe\ssh-keyselect-agent.socket"
 ssh user@example.org
 ```
@@ -68,7 +117,7 @@ set SSH_AUTH_SOCK=\\.\pipe\ssh-keyselect-agent.socket
 ssh user@example.org
 ```
 
-The GUI can start without an upstream agent. Open Settings from the Settings button or File menu to configure the agent endpoints.
+The GUI can start without an upstream agent. Configure its endpoints in Settings.
 
 If you changed the Windows Listen endpoint in Settings, use the endpoint shown in the GUI instead of the default named pipe above.
 
@@ -98,105 +147,8 @@ git config core.sshCommand 'ssh-keyselect ssh'
 
 For `scp` and `sftp`, use an executable wrapper that runs `ssh-keyselect ssh`, then pass its path with `-S`.
 
-## Overview
-
-### SSH connections from your machine
-
-Many SSH clients that support the `SSH_AUTH_SOCK` environment variable use it to request identities and signatures from `SSH KeySelect` when connecting to an SSH server.
-This includes direct use of `ssh` and OpenSSH launched by `git`, `rsync`, or the VS Code `Remote - SSH` extension.
-
-```mermaid
-sequenceDiagram
-  participant Client as SSH client
-  participant KeySelect as SSH KeySelect
-  participant Agent as Existing SSH Agent
-  participant Picker as TUI or GUI picker
-
-  Client->>KeySelect: 1. Request identities via SSH_AUTH_SOCK
-  KeySelect->>Agent: 2. List available identities
-  Agent-->>KeySelect: Reply to 2: available identities
-  KeySelect->>Picker: 3. Show request context and identities
-  Picker-->>KeySelect: 4. Select identity or cancel
-  KeySelect-->>Client: Reply to 1: selected identity or an empty list
-  Client->>KeySelect: 5. Request signature for selected identity
-  KeySelect->>Agent: 6. Sign with selected identity
-  Agent-->>KeySelect: Reply to 6: signature
-  KeySelect-->>Client: Reply to 5: signature
-```
-
-OpenSSH uses the returned signature to authenticate to the SSH server.
-
-### Through agent forwarding
-
-With agent forwarding and Auto Select Off, a remote process such as Git or a nested SSH client uses its forwarded `SSH_AUTH_SOCK`. Its agent requests travel through the SSH connection to the local SSH client, then to SSH KeySelect.
-
-```mermaid
-sequenceDiagram
-  participant Remote as Remote process
-  participant Socket as Forwarded SSH_AUTH_SOCK
-  participant Client as Local SSH client
-  participant KeySelect as SSH KeySelect
-  participant Picker as TUI or GUI picker
-  participant Agent as Existing SSH Agent
-
-  Remote->>Socket: 1. Request identities
-  Socket->>Client: 2. Forward request over the SSH channel
-  Client->>KeySelect: 3. Send request to local SSH_AUTH_SOCK
-  KeySelect->>Agent: 4. List available identities
-  Agent-->>KeySelect: Reply to 4: available identities
-  KeySelect->>Picker: 5. Show request context and identities
-  Picker-->>KeySelect: 6. Select identity or cancel
-  KeySelect-->>Client: Reply to 3: selected identity or an empty list
-  Client-->>Socket: Relay identity response over the SSH channel
-  Socket-->>Remote: Return selected identity
-```
-
-Later signing requests and signature responses follow the same route. KeySelect forwards signing for the selected identity to the local agent; private keys stay on the local machine.
-
-SSH agent forwarding keeps private keys on your machine, but lets a remote host request signatures from your agent. A malicious or compromised host can use forwarded keys to access SSH services and Git hosts reachable with your credentials, including reading or pushing to repositories. Forward your agent only to hosts you trust. See the [OpenSSH manual](https://man.openbsd.org/ssh) for its warning about agent forwarding.
-
-## Shared behavior
-
-### Endpoint modes
-
-`--upstream-mode` controls how KeySelect connects to the existing agent. `--listen-mode` controls how the SSH client connects to the proxy.
-
-|     Mode     |                              Endpoint                               |
-| ------------ | ------------------------------------------------------------------- |
-| `auto`       | Detect a compatible endpoint for the current shell and path.        |
-| `unix`       | Unix-domain socket or Windows AF_UNIX socket.                       |
-| `cygwin`     | Cygwin and Git for Windows socket files.                            |
-| `wsl1`       | WSL1-compatible socket paths on Windows.                            |
-| `named-pipe` | Named Pipe (Windows OpenSSH), such as `\\.\pipe\openssh-ssh-agent`. |
-
-Both modes default to `auto` in the CLI and configuration. GUI Settings resolves an automatic listener mode to a concrete mode for display. Set a mode explicitly when connecting across shells or when automatic detection does not match the endpoint.
-
-### Private key selection
-
-The picker lets you choose a key available through the agent. The SSH agent protocol calls its selectable entry an `identity`: the public key and comment that identify the key the agent can use to sign. KeySelect forwards signing requests for the selected key to the upstream agent and never receives the private key material.
-
-The picker shows each key's comment, key type, size in bits, and SHA256 fingerprint. Selection is scoped to an SSH session-binding chain:
-
-- With Auto Select Off, a new connection starts a fresh selection. A forwarding hop that follows an authentication binding starts a new selection.
-- The selected keys are cached for that chain. Signing requests for unselected keys are rejected.
-- Canceling returns no keys to the SSH client.
-
-See [the developer notes](docs/dev.md#agent-proxy-request-flow) for the request and connection flow.
-
-### Request context
-
-Both pickers show request context in selectable, copyable text. For accepted `session-bind@openssh.com` messages, the context includes verified host key types and fingerprints, plus whether each connection is marked as forwarded. Forwarding hops and the current target are grouped in a tree so connection boundaries are clear.
-
-The agent protocol does not provide a hostname. Names matched from the default local `known_hosts` files are hints, not verified hostnames. If no session binding is available or accepted, the picker says that no verified host key was provided. Press Esc to cancel a request you do not recognize.
-
-### Security and limitations
-
-- The proxy supports listing identities, signing with selected identities, and verified OpenSSH session bindings. Key-management and unknown agent requests are always rejected.
-- The proxy never stores private keys or signs data. It forwards signing requests for permitted identities to the upstream agent.
-- The proxy cannot select keys based on a destination. Identity-listing and signing requests do not include the host, user, or port. A session binding can provide a signed host key, but not a hostname, user, or port.
-- The proxy can only filter identities provided by the upstream agent.
-- On Linux and macOS, Unix socket files use mode `0600`, and a created parent directory uses mode `0700`.
-- Cygwin-compatible socket files use loopback TCP with a token stored in the socket file. Keep the file in a directory accessible only to your account.
+> [!NOTE]
+> The quick-start examples can change `SSH_AUTH_SOCK`, add an `ssh` alias, or set `GIT_SSH_COMMAND` or `core.sshCommand`. See [Uninstallation](#uninstallation) to restore or remove those changes.
 
 ## CLI
 
@@ -221,7 +173,9 @@ The wrapper options go before `--`; arguments after it are passed to OpenSSH.
 | `ssh-keyselect ssh`             | `--upstream`, `--upstream-mode`, `--listen`, `--listen-mode`, `--log-level`, `--log-file` |
 | `ssh-keyselect list` and `test` | `--upstream`, `--upstream-mode`                                                           |
 
-The terminal commands `ssh`, `list`, and `test` do not read TOML configuration files. Unless `--upstream` is set, they use the first non-empty value from `UPSTREAM_SSH_AUTH_SOCK`, then `SSH_AUTH_SOCK`. Paths support environment-variable expansion and a leading `~`.
+The terminal commands `ssh`, `list`, and `test` do not read TOML configuration files.
+
+Unless `--upstream` is set, they use the first non-empty value from `UPSTREAM_SSH_AUTH_SOCK`, then `SSH_AUTH_SOCK`. Paths support environment-variable expansion and a leading `~`.
 
 ### Logging
 
@@ -237,7 +191,12 @@ The log file is replaced on each run and uses mode `0600` on Unix-like systems. 
 
 ### Terminal picker
 
-The terminal shows a blank line, `[ssh-keyselect - YYYY-MM-DD HH:MM:SS TZ]`, request context, and a cyan `Select an SSH key to allow:` prompt above the key table. The empty filter line shows a gray `Filter (If you don't recognize this request, press Esc to cancel.)` hint with the cursor at its start; the hint disappears when you type. Host details are indented beneath their tree labels.
+The terminal picker displays, in order:
+
+- A blank line and `[ssh-keyselect - YYYY-MM-DD HH:MM:SS TZ]`.
+- The request context and a cyan `Select an SSH key to allow:` prompt above the key table.
+- A gray `Filter (If you don't recognize this request, press Esc to cancel.)` hint on the empty filter line. The cursor starts at the beginning, and the hint disappears when you type.
+- Host details indented beneath their tree labels.
 
 |         Key         |              Action              |
 | ------------------- | -------------------------------- |
@@ -248,10 +207,6 @@ The terminal shows a blank line, `[ssh-keyselect - YYYY-MM-DD HH:MM:SS TZ]`, req
 | Ctrl+U              | Clear the filter.                |
 
 ## GUI
-
-### Linux runtime requirements
-
-The Linux GUI requires GTK 3. A Linux system tray icon also requires `libayatana-appindicator3`; the main window works without it.
 
 ### Command options
 
@@ -312,10 +267,10 @@ ssh user@example.org
 
 ### GUI controls
 
-- Open Settings from the Settings button or File > Settings. Apply activates endpoint and logging changes immediately; use File > Save to store them. Set the log level and optional log file in the Logging section. Leaving the file empty writes logs to standard error.
+- Open Settings from the Settings button or File > Settings. In the Logging section, set the log level and optional log file. Leaving the file empty writes logs to standard error.
+- Apply activates endpoint and logging changes immediately. Use File > Save to store them.
 - The File menu opens, saves, and saves as TOML configuration files. The GUI prompts before closing with unsaved changes.
 - About shows the application version and third-party library license inventory. Full license notices are included in `CREDITS`.
-- Release archives include full license notices in `CREDITS`.
 
 ### Auto Select
 
@@ -328,6 +283,101 @@ The GUI has an Auto Select switch beside Agent Proxy. Enabling it requires confi
 The window title combines the action, application name, and local display time. The request-context area begins with the same timestamp followed by host details. It lets you scroll to earlier hops. Use the arrow keys to move through matches, Enter to select, and Esc to cancel.
 
 Right-click a key row and choose `Copy`, or press Ctrl+C, to copy its Comment, Type, Size, and Fingerprint as tab-separated text.
+
+## Shared behavior
+
+### Endpoint modes
+
+`--upstream-mode` controls how KeySelect connects to the existing agent. `--listen-mode` controls how the SSH client connects to the proxy.
+
+|     Mode     |                              Endpoint                               |
+| ------------ | ------------------------------------------------------------------- |
+| `auto`       | Detect a compatible endpoint for the current shell and path.        |
+| `unix`       | Unix-domain socket or Windows AF_UNIX socket.                       |
+| `cygwin`     | Cygwin and Git for Windows socket files.                            |
+| `wsl1`       | WSL1-compatible socket paths on Windows.                            |
+| `named-pipe` | Named Pipe (Windows OpenSSH), such as `\\.\pipe\openssh-ssh-agent`. |
+
+Both modes default to `auto` in the CLI and configuration. GUI Settings resolves an automatic listener mode to a concrete mode for display. Set a mode explicitly when connecting across shells or when automatic detection does not match the endpoint.
+
+### Private key selection
+
+The picker lets you choose a key available through the agent. The SSH agent protocol calls this entry an `identity`: a public key and comment that identify a key the agent can use to sign.
+
+KeySelect forwards signing requests for selected keys to the upstream agent and never receives private key material.
+
+The picker shows each key's comment, key type, size in bits, and SHA256 fingerprint. Selection is scoped to an SSH session-binding chain:
+
+- With Auto Select Off, a new connection starts a fresh selection. A forwarding hop that follows an authentication binding starts a new selection.
+- The selected keys are cached for that chain. Signing requests for unselected keys are rejected.
+- Canceling returns no keys to the SSH client.
+
+See [the developer notes](docs/dev.md#agent-proxy-request-flow) for the request and connection flow.
+
+### Request context
+
+Both pickers show request context as selectable, copyable text. For accepted `session-bind@openssh.com` messages, it includes verified host key types and fingerprints, and whether each connection is marked as forwarded. Forwarding hops and the current target appear in a tree to show connection boundaries.
+
+The agent protocol does not provide a hostname. Names matched from the default local `known_hosts` files are hints, not verified hostnames. If no session binding is available or accepted, the picker says no verified host key was provided. Press Esc to cancel an unrecognized request.
+
+### Security and limitations
+
+- The proxy supports listing identities, signing with selected identities, and verified OpenSSH session bindings. Key-management and unknown agent requests are always rejected.
+- The proxy never stores private keys or signs data. It forwards signing requests for permitted identities to the upstream agent.
+- KeySelect can only filter identities provided by the upstream agent. Identity-listing and signing requests omit the destination host, user, and port. A session binding can provide a signed host key, but not a hostname, user, or port, so KeySelect cannot select keys by destination.
+- On Linux and macOS, Unix socket files use mode `0600`, and a created parent directory uses mode `0700`.
+- Cygwin-compatible socket files use loopback TCP with a token stored in the socket file. Keep the file in a directory accessible only to your account.
+
+## Uninstallation
+
+1. Quit the GUI and finish SSH sessions started through the CLI wrapper.
+2. Restore shell and Git changes:
+   - Restore or unset `SSH_AUTH_SOCK` and remove KeySelect-specific environment settings from shell startup files.
+   - Restore earlier `ssh`, `GIT_SSH_COMMAND`, and `core.sshCommand` values. If you added only this README's examples, run `unalias ssh` and, in each affected repository, `git config --local --unset core.sshCommand`.
+3. Remove KeySelect wrappers, `PATH` entries, shortcuts, and program files. For archive installs, delete the distribution directory with its `LICENSE` and `CREDITS` files, plus any copied `ssh-keyselect-gui.app`. For package installs, remove the package with its package manager using the commands below.
+4. Optionally delete the GUI configuration files (see [Configuration](#configuration)), including files saved with Save As or `--config`, and diagnostic logs created with `--log-file`. Keep your upstream agent and SSH keys; they belong to your SSH setup.
+
+For a package installation:
+
+```bash
+# Debian and Ubuntu
+sudo apt remove ssh-keyselect
+
+# Alpine Linux
+sudo apk del ssh-keyselect
+
+# Arch Linux
+sudo pacman -R ssh-keyselect
+
+# Termux
+apt remove ssh-keyselect
+
+# RHEL-compatible Linux distributions
+sudo dnf remove ssh-keyselect
+
+# Remove this repository entry if you added it during installation.
+sudo dnf-anyrepo remove ssh-keyselect
+```
+
+The imported jfut RPM signing key and `dnf-plugin-anyrepo` can be shared by other packages and repositories. Keep them if you still use them.
+
+## Code signing policy
+
+See [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md) for the current status, planned scope, and team responsibilities.
+
+## Privacy policy
+
+SSH KeySelect has no telemetry, analytics, automatic update checks, or diagnostic uploads. It communicates with other systems only for agent and SSH operations requested or configured by the user or operator.
+
+The proxy communicates with SSH clients and the upstream agent configured through its endpoints. Cygwin-compatible endpoints use loopback TCP on the same machine. SSH clients receive public key identities and permitted authentication signatures. With SSH agent forwarding, remote processes can receive these responses through your SSH connection. Private key material stays in the upstream agent and is never received by KeySelect. See [Security and limitations](#security-and-limitations) and the [agent forwarding guidance](#through-agent-forwarding).
+
+The GUI stores configuration locally when you save it. The pickers can read local `known_hosts` files to display host-name hints.
+
+Diagnostic logging is off by default. When enabled, logs go to local output or the CLI log file you specify and can contain endpoint paths, host key fingerprints, and request metadata. Review logs before sharing them. Bundled libraries do not add third-party online services to the application. Your upstream agent and SSH client have their own settings and privacy policies.
+
+## Code of Conduct
+
+Contributors are expected to follow the project's [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 

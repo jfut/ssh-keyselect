@@ -147,7 +147,7 @@ GUI endpoint export commands use POSIX single-quote escaping, including embedded
 
 The terminal picker serializes prompts and interrupts and joins each pending byte or line read before releasing its selection slot. This also applies to the speculative read used to distinguish Escape from a cursor-key sequence.
 
-A standalone Escape stops input while keeping output and terminal modes available for the final newline. Full session cleanup follows before the selection slot is released. Unix terminals use nonblocking file descriptors and expire the read deadline to interrupt input through Go's poller without closing the shared output descriptor.
+A standalone Escape stops input while keeping output and terminal modes available for the final newline. Full session cleanup follows before the selection slot is released. Unix terminals use nonblocking file descriptors; when a terminal read returns `EAGAIN`, the reader polls for input in bounded intervals. Stopping input interrupts that poll loop and expires the read deadline without closing the shared output descriptor.
 
 Windows input reads run on a dedicated OS thread. Closing the session marks it stopped, cancels synchronous reads with `CancelSynchronousIo` and overlapped reads with `CancelIoEx`, and waits for the reader to exit before restoring console modes. Cancellation retries cover the interval immediately before a read starts. The worker's thread handle is protected until shutdown finishes, preventing cancellation from affecting a reused runtime thread. Git Bash/Cygwin inherited stdin remains open for later prompts and the SSH process.
 
@@ -209,7 +209,13 @@ The GUI uses MyGo's Go-only `ui` package. Views rebuild from application state, 
 
 MyGo draws the UI with Metal on macOS, Direct3D 11 on Windows, and OpenGL on Linux. Native file dialogs, menus, clipboard access, and tray integration use MyGo's platform APIs. Linux needs GTK 3 at runtime; tray integration additionally needs `libayatana-appindicator3`.
 
-On Windows, the key picker remembers the foreground window before opening and tries to restore it after the user closes the picker. Closing its owned modal window can activate the GUI's owner instead. On Linux/X11, the picker has no GUI-window owner, waits until the window is viewable before requesting native focus, traps X11 errors, and asks the window manager to activate the prior top-level X11 window after selection. Wayland compositors control cross-application activation, so the picker cannot force focus or restore another app there; GTK's normal present request is still used.
+Before the MyGo event loop starts, `PathUserData` is set to the `ssh-keyselect` directory under the platform user configuration directory and that directory is created:
+
+- Windows: `%APPDATA%\ssh-keyselect`
+- macOS: `~/Library/Application Support/ssh-keyselect`
+- Linux: `$XDG_CONFIG_HOME/ssh-keyselect`, or `~/.config/ssh-keyselect` when `XDG_CONFIG_HOME` is unset
+
+On Windows, the key picker remembers the foreground window before opening and tries to restore it after the user closes the picker. Closing its owned modal window can activate the GUI's owner instead. On macOS, it records the frontmost app and reactivates it after AppKit finishes closing the sheet. On Linux/X11, the picker has no GUI-window owner, waits until the window is viewable before requesting native focus, traps X11 errors, and asks the window manager to activate the prior top-level X11 window after selection. Wayland compositors control cross-application activation, so the picker cannot force focus or restore another app there; GTK's normal present request is still used.
 
 #### Logging
 
@@ -233,7 +239,7 @@ Each Windows executable combines its icon and version information in one resourc
 
 Windows version resources use `go-winres`, pinned in `scripts/generate-windows-icons.sh` and `scripts/generate-windows-resource.sh`. GoReleaser's per-target hooks use the latter script to set both executables' file and product versions to `.Version`, then remove the temporary resource after each build. Local builds use `0.0.0.0`. The GUI resource description also supplies its `SSH KeySelect` name in Task Manager.
 
-The main window title and tray tooltip include the displayed active Listen endpoint followed by ` - SSH KeySelect`. Both labels are refreshed when the Listen endpoint changes in Settings. The main window's `StateKey` lets MyGo restore its position and size between launches.
+The main window title and tray tooltip include the displayed active Listen endpoint followed by ` - SSH KeySelect`. Both labels are refreshed when the Listen endpoint changes in Settings.
 
 #### Build handling
 

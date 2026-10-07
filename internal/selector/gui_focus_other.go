@@ -1,4 +1,4 @@
-//go:build gui && !windows && !linux
+//go:build gui && !windows && !linux && !darwin
 
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the ssh-keyselect project.

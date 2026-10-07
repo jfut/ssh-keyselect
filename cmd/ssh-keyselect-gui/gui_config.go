@@ -196,6 +196,20 @@ func (a *guiApp) saveConfigurationFromMenu() {
 }
 
 func (a *guiApp) applicationMenu() *mygo.Menu {
+	appMenu := &mygo.MenuItem{Role: mygo.RoleAppMenu}
+	if runtime.GOOS == "darwin" {
+		// Route the app menu's About command through the resizable in-app dialog.
+		appMenu.Submenu = []*mygo.MenuItem{
+			{ID: "about.application-menu", Label: "About " + branding.Name,
+				Click: func(*mygo.MenuItem, *mygo.Window) { a.showAbout() }},
+			mygo.Separator(),
+			{Role: mygo.RoleHide},
+			{Role: mygo.RoleHideOthers},
+			{Role: mygo.RoleUnhide},
+			mygo.Separator(),
+			{Role: mygo.RoleQuit},
+		}
+	}
 	fileItems := []*mygo.MenuItem{
 		{ID: "config.open", Label: "Open Configuration…", Accelerator: "CmdOrCtrl+O", Click: func(*mygo.MenuItem, *mygo.Window) { a.openConfiguration() }},
 		{ID: "config.save", Label: "Save Configuration", Accelerator: "CmdOrCtrl+S", Click: func(*mygo.MenuItem, *mygo.Window) { a.saveConfigurationFromMenu() }},
@@ -209,7 +223,7 @@ func (a *guiApp) applicationMenu() *mygo.Menu {
 		{ID: "about.open", Label: "About", Click: func(*mygo.MenuItem, *mygo.Window) { a.showAbout() }},
 	}
 	items := []*mygo.MenuItem{
-		{Role: mygo.RoleAppMenu},
+		appMenu,
 		{Label: "File", Submenu: fileItems},
 	}
 	if runtime.GOOS == "darwin" {
@@ -334,9 +348,14 @@ func (a *guiApp) openSettings() {
 		mygo.Dialog.Error("Could not open settings.", err.Error())
 		return
 	}
+	height, minHeight := 430, 410
+	if runtime.GOOS == "darwin" {
+		// Keep the settings footer compact while leaving the rounded window edges clear.
+		height, minHeight = 400, 380
+	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: "Settings", Parent: a.window, Modal: true,
-		Width: 600, Height: 430, MinWidth: 580, MinHeight: 410,
+		Width: 600, Height: height, MinWidth: 580, MinHeight: minHeight,
 		Content: ui.View(state.view),
 	})
 	state.window = window
@@ -394,7 +413,12 @@ func (s *guiSettingsState) view(c *ui.Context) {
 		return
 	}
 	theme := c.Theme()
-	ui.Column(c).Fill().Padding(theme.Space(1.5), theme.Space(2)).
+	edgePadding := guiDialogEdgePadding(theme)
+	topPadding := theme.Space(1.5)
+	if runtime.GOOS == "darwin" {
+		topPadding = edgePadding
+	}
+	ui.Column(c).Fill().Padding(topPadding, edgePadding, theme.Space(1.5), edgePadding).
 		Gap(theme.Space(1.5)).Background(ui.Hex("#f5f8fc")).Children(func() {
 		s.endpointSection(c, theme, "Upstream", true)
 		s.endpointSection(c, theme, "Listen", false)

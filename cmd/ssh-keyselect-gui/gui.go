@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -213,6 +215,9 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 
 	mygo.App.SetName("SSH KeySelect")
 	mygo.App.SetVersion(version)
+	if err := setGUIUserDataPath(); err != nil {
+		return cmdutil.ReportError(stderr, guiCommandName, err)
+	}
 	// Keep the native application menu on macOS; other platforms use the
 	// in-window menu bar so its text follows the app's normal UI size.
 	if runtime.GOOS == "darwin" {
@@ -231,6 +236,20 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	}
 	app.shutdown()
 	return 0
+}
+
+// setGUIUserDataPath keeps MyGo's per-user files alongside ssh-keyselect config.
+func setGUIUserDataPath() error {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return fmt.Errorf("locate user data directory: %w", err)
+	}
+	path := filepath.Join(base, "ssh-keyselect")
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return fmt.Errorf("create user data directory: %w", err)
+	}
+	mygo.App.SetPath(mygo.PathUserData, path)
+	return nil
 }
 
 func (a *guiApp) shutdown() {

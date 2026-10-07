@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -116,9 +117,14 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 	}
 	title := fmt.Sprintf("%s [%s - %s]", identitySelectionPrompt, branding.Name, selectionDisplayTime(shownAt))
 	windowParent, windowModal := pickerWindowOwnership(parent)
+	height := 410
+	if runtime.GOOS == "darwin" {
+		// Leave clearance below the fifth row so the sixth row's background stays hidden.
+		height = 380
+	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: title, Parent: windowParent, Modal: windowModal, AlwaysOnTop: true,
-		Width: 860, Height: 410, MinWidth: 820, MinHeight: 360, Hidden: true,
+		Width: 860, Height: height, MinWidth: 820, MinHeight: 360, Hidden: true,
 		Content: ui.View(picker.view),
 	})
 	if window.IsDestroyed() {
@@ -265,7 +271,12 @@ type guiPickerState struct {
 
 func (p *guiPickerState) view(c *ui.Context) {
 	theme := guitable.CompactTheme(c)
-	root := ui.Column(c).Fill().Padding(theme.Space(2)).Gap(theme.Space(1.5))
+	outerPadding := theme.Space(2)
+	if runtime.GOOS == "darwin" {
+		// Keep picker controls clear of the rounded corners of macOS sheets.
+		outerPadding = theme.Space(4)
+	}
+	root := ui.Column(c).Fill().Padding(outerPadding).Gap(theme.Space(1.5))
 	if root.Shortcut(0, ui.KeyEscape) {
 		p.window.Close()
 	}

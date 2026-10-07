@@ -5,7 +5,19 @@
 
 package main
 
-import "github.com/egoist/mygo/ui"
+import (
+	"runtime"
+
+	"github.com/egoist/mygo/ui"
+)
+
+// guiDialogEdgePadding gives macOS sheet contents room around their rounded window corners.
+func guiDialogEdgePadding(theme *ui.Theme) float32 {
+	if runtime.GOOS == "darwin" {
+		return theme.Space(4)
+	}
+	return theme.Space(2)
+}
 
 // guiDialogActionRow gives dialog footers one shared button gap and alignment.
 func guiDialogActionRow(c *ui.Context, theme *ui.Theme, justify ui.Align, children func()) *ui.Element {
@@ -14,7 +26,7 @@ func guiDialogActionRow(c *ui.Context, theme *ui.Theme, justify ui.Align, childr
 	return row
 }
 
-// guiDialogActionFooter centers its actions in the remaining vertical space so the outer margins match.
+// guiDialogActionFooter centers its actions in the remaining vertical space.
 func guiDialogActionFooter(c *ui.Context, theme *ui.Theme, children func()) *ui.Element {
 	footer := ui.Column(c).Grow(1).Center()
 	footer.Children(func() { guiDialogActionRow(c, theme, ui.End, children) })

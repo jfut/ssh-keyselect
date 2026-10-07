@@ -80,13 +80,18 @@ func (a *guiApp) start() {
 }
 
 func (a *guiApp) createMainWindow() {
+	width, height, minHeight := 920, 440, 410
+	if runtime.GOOS == "darwin" {
+		// CompactTheme table rows are 24 DIPs high; this height leaves five key
+		// rows visible after the previous default still showed six.
+		height, minHeight = 362, 350
+	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title:     guiMainWindowTitle(guiDisplayEndpointPath(a.actualListen), a.dirty),
-		Width:     970,
-		Height:    440,
+		Width:     width,
+		Height:    height,
 		MinWidth:  850,
-		MinHeight: 410,
-		StateKey:  "main-compact",
+		MinHeight: minHeight,
 		Content:   ui.View(a.view),
 	})
 	a.window = window
@@ -240,6 +245,10 @@ func (a *guiApp) applicationMenuBar(c *ui.Context, theme *ui.Theme) {
 
 func (a *guiApp) identityCard(c *ui.Context, theme *ui.Theme) {
 	card := guiCard(c)
+	if runtime.GOOS == "darwin" {
+		// Clip selected rows to the card's rounded border on macOS.
+		card.Clip()
+	}
 	card.Grow(1).MinHeight(theme.Space(50)).Children(func() {
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Keys").TextColor(ui.Hex("#1870de")).
@@ -557,14 +566,6 @@ func (a *guiApp) showMainWindow() {
 }
 
 func (a *guiApp) showAbout() {
-	if runtime.GOOS == "darwin" {
-		mygo.App.ShowAboutPanel(mygo.AboutPanelOptions{
-			ApplicationName: branding.Name, ApplicationVersion: version, Version: commit,
-			Copyright: "Copyright contributors to the ssh-keyselect project.",
-			Credits:   fmt.Sprintf("%s\n%s\n\n%s", branding.Author, branding.ProjectURL, strings.TrimSpace(credits.DependencyList)),
-		})
-		return
-	}
 	a.showMainWindow()
 	if a.aboutWindow != nil && !a.aboutWindow.IsDestroyed() {
 		a.aboutWindow.Show()
@@ -577,7 +578,7 @@ func (a *guiApp) showAbout() {
 	}
 	content := ui.View(func(c *ui.Context) {
 		theme := guitable.CompactTheme(c)
-		root := ui.Column(c).Fill().Padding(theme.Space(2)).Gap(theme.Space(2)).Background(ui.Hex("#f5f8fc"))
+		root := ui.Column(c).Fill().Padding(guiDialogEdgePadding(theme)).Gap(theme.Space(2)).Background(ui.Hex("#f5f8fc"))
 		if c.Shortcut(0, ui.KeyEscape) && a.aboutWindow != nil {
 			a.aboutWindow.Close()
 			return

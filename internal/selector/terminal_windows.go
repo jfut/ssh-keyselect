@@ -7,6 +7,7 @@ package selector
 
 import (
 	"errors"
+	"io"
 	"os"
 	"sync"
 
@@ -26,12 +27,13 @@ func openTerminal(_ string) (*terminalSession, error) {
 		restoreOutputMode := enableVirtualTerminalOutput(os.Stdout)
 		width, _, _ := term.GetSize(int(os.Stdout.Fd()))
 		return &terminalSession{
-			reader:    inputReader,
-			writer:    os.Stdout,
-			width:     width,
-			echoInput: !liveEcho,
-			liveEcho:  liveEcho,
-			stopInput: inputReader.Close,
+			reader:       inputReader,
+			writer:       os.Stdout,
+			width:        width,
+			echoInput:    !liveEcho,
+			liveEcho:     liveEcho,
+			inputStopped: make(chan struct{}),
+			stopInput:    inputReader.Close,
 			close: func() error {
 				return errors.Join(restoreInputMode(), restoreOutputMode())
 			},
@@ -58,16 +60,20 @@ func openTerminal(_ string) (*terminalSession, error) {
 	restoreOutputMode := enableVirtualTerminalOutput(output)
 	width, _, _ := term.GetSize(int(output.Fd()))
 	return &terminalSession{
-		reader:    inputReader,
-		writer:    output,
-		width:     width,
-		liveEcho:  liveEcho,
-		stopInput: inputReader.Close,
+		reader:       inputReader,
+		writer:       output,
+		width:        width,
+		liveEcho:     liveEcho,
+		inputStopped: make(chan struct{}),
+		stopInput:    inputReader.Close,
 		close: func() error {
 			return errors.Join(restoreInputMode(), restoreOutputMode(), input.Close(), output.Close())
 		},
 	}, nil
 }
+
+// Windows terminal readers block until input, so they do not need Unix polling.
+func waitForTerminalInput(io.Reader, <-chan struct{}, error) (bool, error) { return false, nil }
 
 // enableVirtualTerminalOutput activates ANSI cursor controls when the writer is a Windows console.
 func enableVirtualTerminalOutput(output *os.File) func() error {

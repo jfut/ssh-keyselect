@@ -14,6 +14,8 @@ type terminalSession struct {
 	reader io.Reader
 	writer io.Writer
 	width  int
+	// inputStopped interrupts readiness polling without closing the output side.
+	inputStopped chan struct{}
 	// echoInput prints a completed line when the inherited stream has no live echo.
 	echoInput bool
 	// liveEcho enables the key-by-key picker when the terminal provides raw input.
@@ -32,6 +34,9 @@ type terminalSession struct {
 // available until the picker has finished writing its final line.
 func (s *terminalSession) StopInput() error {
 	s.inputStopOnce.Do(func() {
+		if s.inputStopped != nil {
+			close(s.inputStopped)
+		}
 		if s.stopInput != nil {
 			s.inputStopErr = s.stopInput()
 		}

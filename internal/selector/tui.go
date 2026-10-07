@@ -77,15 +77,25 @@ type tuiByteReader interface {
 
 // tuiSingleByteReader avoids bufio read-ahead across the prompt/SSH handoff.
 type tuiSingleByteReader struct {
-	reader io.Reader
+	reader  io.Reader
+	stopped <-chan struct{}
 }
 
 func (r tuiSingleByteReader) ReadByte() (byte, error) {
-	var value [1]byte
-	if _, err := io.ReadFull(r.reader, value[:]); err != nil {
-		return 0, err
+	for {
+		var value [1]byte
+		if _, err := io.ReadFull(r.reader, value[:]); err != nil {
+			retry, waitErr := waitForTerminalInput(r.reader, r.stopped, err)
+			if waitErr != nil {
+				return 0, waitErr
+			}
+			if !retry {
+				return 0, err
+			}
+			continue
+		}
+		return value[0], nil
 	}
-	return value[0], nil
 }
 
 type tuiTerminalKey struct {
@@ -96,7 +106,7 @@ type tuiTerminalKey struct {
 func tuiReadTerminalByte(ctx context.Context, terminal *terminalSession) (byte, error) {
 	result := make(chan tuiTerminalKey, 1)
 	go func() {
-		value, err := (tuiSingleByteReader{reader: terminal.reader}).ReadByte()
+		value, err := (tuiSingleByteReader{reader: terminal.reader, stopped: terminal.inputStopped}).ReadByte()
 		result <- tuiTerminalKey{value: value, err: err}
 	}()
 	select {
@@ -149,12 +159,13 @@ func (s *TUISelector) selectLive(ctx context.Context, terminal *terminalSession,
 				_, _ = io.WriteString(terminal.writer, "\a")
 				continue
 			}
-			if _, err := io.WriteString(terminal.writer, "\r\n"); err != nil {
+			// Remove the filter hint before OpenSSH writes an authentication prompt.
+			if _, err := io.WriteString(terminal.writer, "\r\x1b[2K\r\n"); err != nil {
 				return nil, fmt.Errorf("write selection result: %w", err)
 			}
 			return []identity.Identity{matches[selected].identity}, nil
 		case '\x03':
-			_, _ = io.WriteString(terminal.writer, "^C\r\n")
+			_, _ = io.WriteString(terminal.writer, "\r\x1b[2K^C\r\n")
 			return nil, ErrCancelled
 		case '\x1b':
 			key, isArrow, err := tuiReadEscapeKey(ctx, terminal)
@@ -165,7 +176,7 @@ func (s *TUISelector) selectLive(ctx context.Context, terminal *terminalSession,
 				return nil, fmt.Errorf("read escape sequence: %w", err)
 			}
 			if !isArrow {
-				_, _ = io.WriteString(terminal.writer, "\r\n")
+				_, _ = io.WriteString(terminal.writer, "\r\x1b[2K\r\n")
 				return nil, ErrCancelled
 			}
 			switch key {
@@ -223,7 +234,7 @@ func (s *TUISelector) selectLive(ctx context.Context, terminal *terminalSession,
 func tuiReadEscapeKey(ctx context.Context, terminal *terminalSession) (byte, bool, error) {
 	result := make(chan tuiTerminalKey, 1)
 	go func() {
-		value, err := (tuiSingleByteReader{reader: terminal.reader}).ReadByte()
+		value, err := (tuiSingleByteReader{reader: terminal.reader, stopped: terminal.inputStopped}).ReadByte()
 		result <- tuiTerminalKey{value: value, err: err}
 	}()
 	timer := time.NewTimer(40 * time.Millisecond)
@@ -269,7 +280,7 @@ func (s *TUISelector) selectLineBuffered(ctx context.Context, terminal *terminal
 		}
 		lineCh := make(chan tuiInputLine, 1)
 		go func() {
-			line, skipNextLF, err := tuiReadInputLine(tuiSingleByteReader{reader: terminal.reader}, skipLF)
+			line, skipNextLF, err := tuiReadInputLine(tuiSingleByteReader{reader: terminal.reader, stopped: terminal.inputStopped}, skipLF)
 			lineCh <- tuiInputLine{line: line, skipLF: skipNextLF, err: err}
 		}()
 		select {

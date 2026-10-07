@@ -23,7 +23,7 @@ The client requests available identities, and the picker controls which ones it 
 
 ### Through agent forwarding
 
-With agent forwarding and Auto Select Off, a remote process such as Git or a nested SSH client uses its forwarded `SSH_AUTH_SOCK`. Its requests travel through the SSH connection to your local SSH client and KeySelect. The picker runs locally, and permitted signing requests go to your local upstream agent.
+With agent forwarding and `Auto Select Off`, a remote process such as Git or a nested SSH client uses its forwarded `SSH_AUTH_SOCK`. Its requests travel through the SSH connection to your local SSH client and KeySelect. The picker runs locally, and permitted signing requests go to your local upstream agent.
 
 > [!WARNING]
 > SSH agent forwarding keeps private keys on your machine, but lets a remote host request signatures from your agent. A malicious or compromised host can use forwarded keys to access SSH services and Git hosts reachable with your credentials, including reading or pushing to repositories. Forward your agent only to hosts you trust. See the [OpenSSH manual](https://man.openbsd.org/ssh) for its warning about agent forwarding.
@@ -93,16 +93,20 @@ The Alpine `.apk` is unsigned. Download `checksums.txt` with the package and ver
 ```sh
 apk_file=ssh-keyselect_VERSION_ARCH.apk
 grep -F "  $apk_file" checksums.txt | sha256sum -c
-sudo apk add --allow-untrusted "./$apk_file"
+apk add --allow-untrusted "./$apk_file"
 ```
 
 ## Quick start
 
 ### GUI: ssh-keyselect-gui
 
-Start the GUI first, then set `SSH_AUTH_SOCK` to the Listen endpoint shown in its main window. On Linux and macOS, the default endpoint is `$HOME/.ssh/ssh-keyselect-agent.sock`.
+Start the GUI first, then set `SSH_AUTH_SOCK` to the Listen endpoint shown in its main window. On macOS and Linux, the default endpoint is `$HOME/.ssh/ssh-keyselect-agent.sock`.
 
-The Upstream and Listen cards show selectable socket paths. Their `Copy export command` buttons copy POSIX `export` assignments with shell-quoted paths. In PowerShell or Command Prompt, use the environment-variable commands shown below.
+`Upstream` is the endpoint for your existing SSH agent; `Listen` is where SSH clients connect to KeySelect. The cards show these paths, and their `Copy export command` buttons copy POSIX `export` assignments with shell-quoted paths.
+
+The GUI can start without an upstream agent. Configure its endpoints in Settings.
+
+#### Shell
 
 For Git Bash ([Git for Windows](https://gitforwindows.org/)), macOS, and Linux, start the GUI and set `SSH_AUTH_SOCK` to its default Listen endpoint:
 
@@ -112,7 +116,27 @@ export SSH_AUTH_SOCK="$HOME/.ssh/ssh-keyselect-agent.sock"
 ssh user@example.org
 ```
 
+#### VS Code on Windows
+
+Configure VS Code's [terminal profile](https://code.visualstudio.com/docs/terminal/profiles) to use Git Bash. Start the GUI with Listen mode set to `cygwin` and a Listen endpoint that matches `SSH_AUTH_SOCK` below. See the [Git Bash configuration example](#configuration) for setting the endpoint. Open User Settings (JSON) and add the following properties inside the existing top-level object. Keep your other settings. If any of these keys already exist, update them instead of adding duplicates; merge the `Git Bash` profile and `SSH_AUTH_SOCK` into the existing profile and environment objects. Replace `USERNAME` with your Windows account name:
+
+```json
+"terminal.integrated.profiles.windows": {
+  "Git Bash": {
+    "path": "C:/Users/USERNAME/scoop/apps/git-with-openssh/current/bin/bash.exe"
+  }
+},
+"terminal.integrated.defaultProfile.windows": "Git Bash",
+"terminal.integrated.env.windows": {
+  "SSH_AUTH_SOCK": "C:/Users/USERNAME/.ssh/ssh-keyselect-agent.sock"
+}
+```
+
+#### Windows OpenSSH
+
 For Windows OpenSSH, set the GUI's Listen mode to Named Pipe. The default endpoint is `\\.\pipe\ssh-keyselect-agent.socket`.
+
+If you changed the Windows Listen endpoint in Settings, use the endpoint shown in the GUI instead of the default named pipe above.
 
 For Windows PowerShell:
 
@@ -130,19 +154,14 @@ set SSH_AUTH_SOCK=\\.\pipe\ssh-keyselect-agent.socket
 ssh user@example.org
 ```
 
-The GUI can start without an upstream agent. Configure its endpoints in Settings.
-
-If you changed the Windows Listen endpoint in Settings, use the endpoint shown in the GUI instead of the default named pipe above.
-
-The GUI's Auto Select control can temporarily expose all upstream keys without opening the picker. See [Auto Select](#auto-select) before enabling it.
-
 ### CLI: ssh-keyselect
 
 Run OpenSSH through a temporary agent proxy. The picker appears in the current terminal, and the temporary endpoint is removed when SSH exits.
+An upstream agent must be available through `UPSTREAM_SSH_AUTH_SOCK` or `SSH_AUTH_SOCK`, or set explicitly with `--upstream`.
 
 ```bash
 ssh-keyselect ssh user@example.org
-ssh-keyselect ssh -p 2222 user@example.org
+ssh-keyselect ssh -- -p 2222 user@example.org
 ```
 
 To use the picker for terminal commands named `ssh`, add an alias:
@@ -225,8 +244,8 @@ The terminal picker displays, in order:
 
 Run `ssh-keyselect-gui` to start the GUI. Its options are:
 
-| Command             | Options |
-| ------------------- | ------- |
+|       Command       |                                         Options                                         |
+| ------------------- | --------------------------------------------------------------------------------------- |
 | `ssh-keyselect-gui` | `--config`, `--listen`, `--listen-mode`, `--upstream`, `--upstream-mode`, `--log-level` |
 
 ### Configuration
@@ -248,7 +267,7 @@ Use `--config FILE` to select another file. Command-line values override file va
 
 The configuration loader rejects unknown keys. Logging is off by default. Set `log.level` to enable it and optionally set `log.file` to append logs to a file. When `log.file` is empty, logs go to standard error.
 
-Example configuration for Git Bash on Windows, using a Cygwin-compatible listener:
+Example configuration for `Git Bash` on Windows, using a Cygwin-compatible listener:
 
 ```toml
 [agent]
@@ -256,7 +275,7 @@ Example configuration for Git Bash on Windows, using a Cygwin-compatible listene
 upstream = 'C:\Users\alice\.ssh\ssh-upstream-agent.sock'
 listen = 'C:\Users\alice\.ssh\ssh-keyselect-agent.sock'
 
-# Linux/macOS:
+# macOS and Linux:
 # upstream = "$SSH_AUTH_SOCK"
 # listen = "$HOME/.ssh/ssh-keyselect-agent.sock"
 
@@ -338,38 +357,28 @@ The agent protocol does not provide a hostname. Names matched from the default l
 - The proxy supports listing identities, signing with selected identities, and verified OpenSSH session bindings. Key-management and unknown agent requests are always rejected.
 - The proxy never stores private keys or signs data. It forwards signing requests for permitted identities to the upstream agent.
 - KeySelect can only filter identities provided by the upstream agent. Identity-listing and signing requests omit the destination host, user, and port. A session binding can provide a signed host key, but not a hostname, user, or port, so KeySelect cannot select keys by destination.
-- On Linux and macOS, Unix socket files use mode `0600`, and a created parent directory uses mode `0700`.
-- Cygwin-compatible socket files use loopback TCP with a token stored in the socket file. Keep the file in a directory accessible only to your account.
+- On macOS and Linux, Unix socket files use mode `0600`, and a created parent directory uses mode `0700`.
+- Keep Cygwin-compatible socket files in a directory accessible only to your account.
 
 ## Uninstallation
 
 1. Quit the GUI and finish SSH sessions started through the CLI wrapper.
 2. Restore shell and Git changes:
-   - Restore or unset `SSH_AUTH_SOCK` and remove KeySelect-specific environment settings from shell startup files.
+   - Restore the previous `SSH_AUTH_SOCK` value or remove the setting from shell startup files and VS Code User Settings (JSON). If you changed VS Code's default profile for this setup, restore its previous value; remove the Git Bash profile if you added it only for KeySelect and no longer need it.
    - Restore earlier `ssh`, `GIT_SSH_COMMAND`, and `core.sshCommand` values. If you added only this README's examples, run `unalias ssh` and, in each affected repository, `git config --local --unset core.sshCommand`.
-3. Remove KeySelect wrappers, `PATH` entries, shortcuts, and program files. For archive installs, delete the distribution directory with its `LICENSE` and `CREDITS` files, plus any copied `ssh-keyselect-gui.app`. For package installs, remove the package with its package manager using the commands below.
+3. Remove KeySelect wrappers, `PATH` entries, shortcuts, and program files. For archive installs, delete the distribution directory with its `LICENSE` and `CREDITS` files, plus any copied `ssh-keyselect-gui.app`. For package installs, remove the package with the package manager you used to install it.
 4. Optionally delete the GUI configuration files (see [Configuration](#configuration)), including files saved with Save As or `--config`, and diagnostic logs created with `--log-file`. Keep your upstream agent and SSH keys; they belong to your SSH setup.
 
-For a package installation:
+For RHEL-compatible Linux distributions:
 
 ```bash
-# Debian and Ubuntu
-sudo apt remove ssh-keyselect
+dnf remove ssh-keyselect
+```
 
-# Alpine Linux
-sudo apk del ssh-keyselect
+If you added the DNF repository during installation, remove it with:
 
-# Arch Linux
-sudo pacman -R ssh-keyselect
-
-# Termux
-apt remove ssh-keyselect
-
-# RHEL-compatible Linux distributions
-sudo dnf remove ssh-keyselect
-
-# Remove this repository entry if you added it during installation.
-sudo dnf-anyrepo remove ssh-keyselect
+```bash
+dnf-anyrepo remove ssh-keyselect
 ```
 
 The imported jfut RPM signing key and `dnf-plugin-anyrepo` can be shared by other packages and repositories. Keep them if you still use them.
@@ -382,7 +391,7 @@ See [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md) for the current status, pla
 
 SSH KeySelect has no telemetry, analytics, automatic update checks, or diagnostic uploads. It communicates with other systems only for agent and SSH operations requested or configured by the user or operator.
 
-The proxy communicates with SSH clients and the upstream agent configured through its endpoints. Cygwin-compatible endpoints use loopback TCP on the same machine. SSH clients receive public key identities and permitted authentication signatures. With SSH agent forwarding, remote processes can receive these responses through your SSH connection. Private key material stays in the upstream agent and is never received by KeySelect. See [Security and limitations](#security-and-limitations) and the [agent forwarding guidance](#through-agent-forwarding).
+The proxy communicates with SSH clients and the upstream agent configured through its endpoints. SSH clients receive public key identities and permitted authentication signatures. With SSH agent forwarding, remote processes can receive these responses through your SSH connection. Private key material stays in the upstream agent and is never received by KeySelect. See [Security and limitations](#security-and-limitations) and the [agent forwarding guidance](#through-agent-forwarding).
 
 The GUI stores configuration locally when you save it. The pickers can read local `known_hosts` files to display host-name hints.
 

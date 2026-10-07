@@ -355,25 +355,47 @@ func (p *guiPickerState) view(c *ui.Context) {
 			filter.Focus()
 			p.focusFilter = false
 		}
-		// Keep the filter focused while vertical arrows move through matching keys.
+		// Keep the filter focused while navigation keys move through matching keys.
 		filter.HandleInput(func(event ui.InputEvent) bool {
 			if event.Kind != ui.InputKeyDown {
 				return false
 			}
-			delta := 0
+			delta, pageTarget := 0, -1
 			switch event.Key {
 			case ui.KeyUp:
 				delta = -1
 			case ui.KeyDown:
 				delta = 1
+			case ui.KeyPageUp:
+				// Move to the visible edge first, then advance by a visible page.
+				first, last := p.tableState.Visible()
+				pageSize := max(last-first, 1)
+				if last >= first && p.selected > first && p.selected <= last {
+					pageTarget = first
+				} else {
+					delta = -pageSize
+				}
+			case ui.KeyPageDown:
+				first, last := p.tableState.Visible()
+				pageSize := max(last-first, 1)
+				if last >= first && p.selected >= first && p.selected < last {
+					pageTarget = last
+				} else {
+					delta = pageSize
+				}
 			default:
 				return false
 			}
 			if len(matches) > 0 {
-				if p.selected < 0 || p.selected >= len(matches) {
-					p.selected = 0
+				if pageTarget >= 0 {
+					p.selected = pageTarget
 				} else {
-					p.selected = (p.selected + delta + len(matches)) % len(matches)
+					p.selected += delta
+				}
+				if p.selected < 0 {
+					p.selected = 0
+				} else if p.selected >= len(matches) {
+					p.selected = len(matches) - 1
 				}
 				p.tableState.ScrollIntoView(p.selected)
 			}

@@ -9,9 +9,9 @@ Selective SSH Agent Proxy
 [![Tag](https://img.shields.io/github/tag/jfut/ssh-keyselect.svg)](https://github.com/jfut/ssh-keyselect/releases)
 [![License](https://img.shields.io/badge/license-Apache%202-blue)](https://github.com/jfut/ssh-keyselect/blob/main/LICENSE)
 
-`SSH KeySelect` is an interactive SSH agent proxy. It lets you choose which keys an SSH client can offer from your existing agent.
+`SSH KeySelect` is an interactive SSH agent proxy that lets you choose which keys an SSH client can offer from your existing agent. By rejecting signing requests for unselected keys, it helps mitigate **SSH Agent Hijacking**.
 
-Private keys stay in your existing agent. The proxy rejects signing requests for unselected keys, helping prevent unintended key use and reducing the risk of reaching an SSH server's `MaxAuthTries` limit.
+Private keys stay in your existing agent. Offering fewer keys can reduce the risk of reaching an SSH server's `MaxAuthTries` limit.
 
 ## Overview
 
@@ -25,8 +25,8 @@ The client requests available identities, and the picker controls which ones it 
 
 With agent forwarding and `Auto Select Off`, a remote process such as Git or a nested SSH client uses its forwarded `SSH_AUTH_SOCK`. Its requests travel through the SSH connection to your local SSH client and KeySelect. The picker runs locally, and permitted signing requests go to your local upstream agent.
 
-> [!WARNING]
-> SSH agent forwarding keeps private keys on your machine, but lets a remote host request signatures from your agent. A malicious or compromised host can use forwarded keys to access SSH services and Git hosts reachable with your credentials, including reading or pushing to repositories. Forward your agent only to hosts you trust. See the [OpenSSH manual](https://man.openbsd.org/ssh) for its warning about agent forwarding.
+> [!IMPORTANT]
+> Forwarding your agent creates an **SSH Agent Hijacking** risk: even though private keys stay on your machine, a remote host can request signatures from your agent. A malicious or compromised host can use those signatures to access SSH services and Git hosts reachable with your credentials, including reading or pushing to repositories. Forward your agent only to hosts you trust. See the [OpenSSH manual](https://man.openbsd.org/ssh) for its warning about agent forwarding.
 
 ## Installation
 
@@ -306,7 +306,10 @@ ssh user@example.org
 
 ### Auto Select
 
-Auto Select temporarily bypasses the per-connection picker. When On, the proxy returns every upstream identity and forwards signing requests for any of them. Any client that can access the proxy can then use every key in the upstream agent.
+Auto Select temporarily bypasses the per-connection picker. When On, the proxy returns every upstream identity and forwards signing requests for any of them.
+
+> [!CAUTION]
+> When Auto Select is On, KeySelect no longer mitigates **SSH Agent Hijacking**: any client that can access the proxy can request signatures from every key in the upstream agent.
 
 The GUI has an Auto Select switch beside Agent Proxy. Enabling it requires confirmation. Use it only for trusted work, then turn it off. The setting is temporary, is not saved in TOML, and applies to new identity requests. A client that already received all identities while Auto Select was on keeps that selection until its connection closes.
 

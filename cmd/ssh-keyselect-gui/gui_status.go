@@ -81,14 +81,13 @@ func (a *guiApp) start() {
 }
 
 func (a *guiApp) createMainWindow() {
-	width, height, minHeight := 920, 440, 410
+	// Windows dimensions are the default; adjust other platforms to show five key
+	// rows.
+	width, height, minHeight := 920, 415, 385
 	if runtime.GOOS == "darwin" {
-		// CompactTheme table rows are 24 DIPs high; this height leaves five key
-		// rows visible after the previous default still showed six.
-		height, minHeight = 362, 350
-	} else if runtime.GOOS == "windows" {
-		// Leave a small clearance below the fifth row so the sixth row stays hidden.
-		height, minHeight = 415, 386
+		height, minHeight = 362, 332
+	} else if runtime.GOOS == "linux" {
+		height, minHeight = 352, 322
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title:     guiMainWindowTitle(guiDisplayEndpointPath(a.actualListen), a.dirty),
@@ -246,10 +245,8 @@ func (a *guiApp) applicationMenuBar(c *ui.Context, theme *ui.Theme) {
 
 func (a *guiApp) identityCard(c *ui.Context, theme *ui.Theme) {
 	card := guiCard(c)
-	if runtime.GOOS == "darwin" {
-		// Clip selected rows to the card's rounded border on macOS.
-		card.Clip()
-	}
+	// Keep selected row highlights inside the rounded key card on every OS.
+	card.Clip()
 	card.Grow(1).MinHeight(theme.Space(50)).Children(func() {
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Keys").TextColor(ui.Hex("#1870de")).

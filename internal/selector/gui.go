@@ -117,17 +117,17 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 	}
 	title := fmt.Sprintf("%s [%s - %s]", identitySelectionPrompt, branding.Name, selectionDisplayTime(shownAt))
 	windowParent, windowModal := pickerWindowOwnership(parent)
-	height := 410
+	// Windows dimensions are the default; adjust other platforms to show five key
+	// rows.
+	height, minHeight := 386, 360
 	if runtime.GOOS == "darwin" {
-		// Leave clearance below the fifth row so the sixth row's background stays hidden.
 		height = 380
-	} else if runtime.GOOS == "windows" {
-		// Reduce the Windows default by one 24-DIP table row to show five keys.
-		height = 386
+	} else if runtime.GOOS == "linux" {
+		height, minHeight = 340, 330
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: title, Parent: windowParent, Modal: windowModal, AlwaysOnTop: true,
-		Width: 860, Height: height, MinWidth: 820, MinHeight: 360, Hidden: true,
+		Width: 860, Height: height, MinWidth: 820, MinHeight: minHeight, Hidden: true,
 		Content: ui.View(picker.view),
 	})
 	if window.IsDestroyed() {
@@ -305,6 +305,8 @@ func (p *guiPickerState) view(c *ui.Context) {
 		// Match the main window's key card around the picker table.
 		tableArea := ui.Column(c).Grow(1).MinHeight(theme.Space(37)).Padding(theme.Space(2.5)).
 			Background(theme.Surface).Border(1, theme.Border).Radius(theme.Space(3))
+		// Keep selected row highlights inside the rounded key card on every OS.
+		tableArea.Clip()
 		tableArea.Children(func() {
 			if len(matches) == 0 {
 				ui.Column(c).Grow(1).Center().Children(func() {

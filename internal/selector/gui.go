@@ -276,7 +276,12 @@ func (p *guiPickerState) view(c *ui.Context) {
 				Selectable()
 		})
 		if p.lastQuery != p.query {
+			// A new result set must not inherit the old selection anchor; retain only column layout.
+			columns := p.tableState.Columns
+			p.tableState = ui.ListState{Columns: columns}
 			p.selected = 0
+			// Start each new result set at its first key, including after an empty result.
+			p.tableState.ScrollTo(0, ui.Start)
 			p.lastQuery = p.query
 		}
 		matches := p.matches()
@@ -334,6 +339,30 @@ func (p *guiPickerState) view(c *ui.Context) {
 			filter.Focus()
 			p.focusFilter = false
 		}
+		// Keep the filter focused while vertical arrows move through matching keys.
+		filter.HandleInput(func(event ui.InputEvent) bool {
+			if event.Kind != ui.InputKeyDown {
+				return false
+			}
+			delta := 0
+			switch event.Key {
+			case ui.KeyUp:
+				delta = -1
+			case ui.KeyDown:
+				delta = 1
+			default:
+				return false
+			}
+			if len(matches) > 0 {
+				if p.selected < 0 || p.selected >= len(matches) {
+					p.selected = 0
+				} else {
+					p.selected = (p.selected + delta + len(matches)) % len(matches)
+				}
+				p.tableState.ScrollIntoView(p.selected)
+			}
+			return true
+		})
 		if filter.Submitted() {
 			p.choose(matches)
 		}

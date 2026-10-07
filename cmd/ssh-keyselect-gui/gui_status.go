@@ -28,6 +28,7 @@ var (
 	guiRefreshIcon  = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5m-5 4a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>`))
 	guiSettingsIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2m9-9h-2M5 12H3m15.36-6.36-1.42 1.42M7.06 16.94l-1.42 1.42m12.72 0-1.42-1.42M7.06 7.06 5.64 5.64"/></svg>`))
 	guiCopyIcon     = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v11a1.5 1.5 0 0 1-1.5 1.5H16M5.5 8h9A1.5 1.5 0 0 1 16 9.5v10A1.5 1.5 0 0 1 14.5 21h-9A1.5 1.5 0 0 1 4 19.5v-10A1.5 1.5 0 0 1 5.5 8Z"/></svg>`))
+	guiCloseIcon    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2" d="m6 6 12 12M18 6 6 18"/></svg>`))
 )
 
 // guiMainWindowTitle keeps the application name, endpoint, and unsaved state together.
@@ -154,9 +155,6 @@ func (a *guiApp) view(c *ui.Context) {
 	content.Children(func() {
 		if runtime.GOOS != "darwin" {
 			a.applicationMenuBar(c, theme)
-		}
-		if a.statusMessage != "" {
-			ui.Text(c, a.statusMessage).TextColor(theme.Warning)
 		}
 		a.identityCard(c, theme)
 		a.connectionCard(c, theme)
@@ -299,6 +297,17 @@ func (a *guiApp) connectionCard(c *ui.Context, theme *ui.Theme) {
 			settings.Size(theme.Space(8), theme.Space(8))
 			if settings.Clicked() && !a.applying {
 				a.openSettings()
+			}
+			if a.statusMessage != "" {
+				ui.Row(c).Grow(1).Gap(theme.Space(1)).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, a.statusMessage).TextColor(theme.Warning).
+						SingleLine().Tooltip(a.statusMessage).Shrink(1).MinWidth(0)
+					dismiss := guiIconButton(c, guiCloseIcon, "Dismiss status message", false, theme)
+					dismiss.Size(theme.Space(7), theme.Space(7))
+					if dismiss.Clicked() {
+						a.statusMessage = ""
+					}
+				})
 			}
 			autoSelect := a.server.AutoSelect()
 			ui.Text(c, "Auto Select").TextColor(ui.Hex("#1870de")).

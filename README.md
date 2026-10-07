@@ -41,22 +41,6 @@ Windows release executables are currently unsigned. See the [Code signing policy
 
 SSH KeySelect does not install a background service or enable automatic startup. It creates its Listen endpoint while running.
 
-### Linux GUI runtime requirements
-
-The Linux GUI requires GTK 3. A system tray icon also requires `libayatana-appindicator3`; the main window works without it.
-
-### Other Linux package formats
-
-Releases also include native packages for Debian and Ubuntu (`.deb`), Alpine Linux (`.apk`), and Arch Linux (`.pkg.tar.zst`). Termux packages are provided as `.deb` files. Download the package for your architecture from [Releases](https://github.com/jfut/ssh-keyselect/releases) and install it with `apt`, `apk`, or `pacman`, as appropriate.
-
-The Alpine `.apk` is unsigned. Download `checksums.txt` with the package and verify the package checksum before installing it. Replace the example filename below with the exact `.apk` asset you downloaded:
-
-```sh
-apk_file=ssh-keyselect_VERSION_ARCH.apk
-grep -F "  $apk_file" checksums.txt | sha256sum -c
-sudo apk add --allow-untrusted "./$apk_file"
-```
-
 ### RHEL-compatible Linux distributions
 
 Download an RPM from [Releases](https://github.com/jfut/ssh-keyselect/releases) and install it directly, or configure the repository for DNF-managed installation.
@@ -82,6 +66,35 @@ dnf install ssh-keyselect
 ```
 
 See [Uninstallation](#uninstallation) for removal instructions.
+
+### Linux GUI runtime requirements
+
+The Linux GUI requires GTK 3. A system tray icon also requires `libayatana-appindicator3` and a desktop environment that displays AppIndicator icons. GNOME Shell does not show these icons by default.
+
+On AlmaLinux 9 with GNOME, enable EPEL and install the AppIndicator library and GNOME Shell extension:
+
+```bash
+dnf config-manager --set-enabled crb
+dnf install epel-release
+dnf install libayatana-appindicator-gtk3 gnome-shell-extension-appindicator
+
+# Enable the extension for each user
+gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com
+```
+
+Sign out and back in if the icon does not appear after enabling the extension. The main window works without the AppIndicator library or extension.
+
+### Other Linux package formats
+
+Releases also include native packages for Debian and Ubuntu (`.deb`), Alpine Linux (`.apk`), and Arch Linux (`.pkg.tar.zst`). Termux packages are provided as `.deb` files. Download the package for your architecture from [Releases](https://github.com/jfut/ssh-keyselect/releases) and install it with `apt`, `apk`, or `pacman`, as appropriate.
+
+The Alpine `.apk` is unsigned. Download `checksums.txt` with the package and verify the package checksum before installing it. Replace the example filename below with the exact `.apk` asset you downloaded:
+
+```sh
+apk_file=ssh-keyselect_VERSION_ARCH.apk
+grep -F "  $apk_file" checksums.txt | sha256sum -c
+sudo apk add --allow-untrusted "./$apk_file"
+```
 
 ## Quick start
 

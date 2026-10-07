@@ -24,6 +24,8 @@ func capturePickerReturnWindow() uintptr {
 	return uintptr(windows.GetForegroundWindow())
 }
 
+func pickerWindowOwnership(parent *mygo.Window) (*mygo.Window, bool) { return parent, parent != nil }
+
 // acquirePickerNativeFocus bridges Windows foreground restrictions before focusing a MyGo picker window.
 func acquirePickerNativeFocus(window *mygo.Window) {
 	if window == nil || window.IsDestroyed() {
@@ -54,7 +56,9 @@ func acquirePickerNativeFocus(window *mygo.Window) {
 }
 
 // restorePickerReturnWindow returns keyboard focus to the app that requested a key selection.
-func restorePickerReturnWindow(hwnd uintptr) {
+func capturePickerRestoreTimestamp() uint32 { return 0 }
+
+func restorePickerReturnWindow(hwnd uintptr, _ uint32) {
 	if hwnd == 0 {
 		return
 	}
@@ -77,3 +81,5 @@ func restorePickerReturnWindow(hwnd uintptr) {
 	pickerSetForegroundWindow.Call(hwnd)
 	pickerSetFocus.Call(hwnd)
 }
+
+func releasePickerReturnWindow(uintptr) {}

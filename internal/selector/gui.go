@@ -121,6 +121,9 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 	if runtime.GOOS == "darwin" {
 		// Leave clearance below the fifth row so the sixth row's background stays hidden.
 		height = 380
+	} else if runtime.GOOS == "windows" {
+		// Reduce the Windows default by one 24-DIP table row to show five keys.
+		height = 386
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: title, Parent: windowParent, Modal: windowModal, AlwaysOnTop: true,

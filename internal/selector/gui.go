@@ -103,6 +103,7 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 		parent = parentProvider()
 	}
 	returnWindow := capturePickerReturnWindow()
+	defer releasePickerReturnWindow(returnWindow)
 	shownAt := time.Now()
 	offered := append([]identity.Identity(nil), identities...)
 	picker := &guiPickerState{
@@ -114,8 +115,9 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 		detailsScroll: ui.ScrollState{Y: math.MaxFloat32},
 	}
 	title := fmt.Sprintf("%s [%s - %s]", identitySelectionPrompt, branding.Name, selectionDisplayTime(shownAt))
+	windowParent, windowModal := pickerWindowOwnership(parent)
 	window := mygo.NewWindow(mygo.WindowOptions{
-		Title: title, Parent: parent, Modal: parent != nil, AlwaysOnTop: true,
+		Title: title, Parent: windowParent, Modal: windowModal, AlwaysOnTop: true,
 		Width: 860, Height: 410, MinWidth: 820, MinHeight: 360, Hidden: true,
 		Content: ui.View(picker.view),
 	})
@@ -198,8 +200,8 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 		select {
 		case <-s.stopped:
 		default:
-			// The native modal owner may be reactivated when the picker closes, so restore the SSH caller afterward.
-			mygo.RunOnMain(func() { restorePickerReturnWindow(returnWindow) })
+			// A native window manager may reactivate the GUI owner when the picker closes, so restore the SSH caller afterward.
+			mygo.RunOnMain(func() { restorePickerReturnWindow(returnWindow, selection.focusTime) })
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -228,8 +230,9 @@ func (s *GUISelector) init() {
 }
 
 type guiSelectionResult struct {
-	identity identity.Identity
-	err      error
+	identity  identity.Identity
+	focusTime uint32
+	err       error
 }
 
 type guiPickerState struct {
@@ -247,6 +250,7 @@ type guiPickerState struct {
 	refreshing     bool
 	hasSelection   bool
 	chosen         identity.Identity
+	focusTime      uint32
 	searchOptions  []identityOption
 	optionsValid   bool
 	matchesCache   []identityMatch
@@ -360,6 +364,7 @@ func (p *guiPickerState) choose(matches []identityMatch) {
 	}
 	p.chosen = matches[p.selected].identity
 	p.hasSelection = true
+	p.focusTime = capturePickerRestoreTimestamp()
 	p.window.Close()
 }
 
@@ -367,7 +372,7 @@ func (p *guiPickerState) result() guiSelectionResult {
 	if !p.hasSelection {
 		return guiSelectionResult{err: ErrCancelled}
 	}
-	return guiSelectionResult{identity: p.chosen}
+	return guiSelectionResult{identity: p.chosen, focusTime: p.focusTime}
 }
 
 func (p *guiPickerState) refreshKeys() {

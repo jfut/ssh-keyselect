@@ -209,7 +209,7 @@ The GUI uses MyGo's Go-only `ui` package. Views rebuild from application state, 
 
 MyGo draws the UI with Metal on macOS, Direct3D 11 on Windows, and OpenGL on Linux. Native file dialogs, menus, clipboard access, and tray integration use MyGo's platform APIs. Linux needs GTK 3 at runtime; tray integration additionally needs `libayatana-appindicator3`.
 
-On Windows, the key picker remembers the foreground window before opening and tries to restore it after the user closes the picker. Closing its owned modal window can activate the GUI's owner instead.
+On Windows, the key picker remembers the foreground window before opening and tries to restore it after the user closes the picker. Closing its owned modal window can activate the GUI's owner instead. On Linux/X11, the picker has no GUI-window owner, waits until the window is viewable before requesting native focus, traps X11 errors, and asks the window manager to activate the prior top-level X11 window after selection. Wayland compositors control cross-application activation, so the picker cannot force focus or restore another app there; GTK's normal present request is still used.
 
 #### Logging
 

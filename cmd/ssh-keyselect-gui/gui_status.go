@@ -62,6 +62,8 @@ func (a *guiApp) start() {
 		}
 	}
 	if err != nil {
+		a.statusMessage = "System tray icon unavailable: " + err.Error()
+		a.window.Invalidate()
 		a.logger.Warn("create system tray icon", "error", err)
 	}
 

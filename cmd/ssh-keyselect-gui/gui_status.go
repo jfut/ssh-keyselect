@@ -14,7 +14,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/jfut/ssh-keyselect/assets/gui"
+	guiassets "github.com/jfut/ssh-keyselect/assets/gui"
 	"github.com/jfut/ssh-keyselect/internal/branding"
 	"github.com/jfut/ssh-keyselect/internal/credits"
 	"github.com/jfut/ssh-keyselect/internal/guitable"
@@ -86,6 +86,9 @@ func (a *guiApp) createMainWindow() {
 		// CompactTheme table rows are 24 DIPs high; this height leaves five key
 		// rows visible after the previous default still showed six.
 		height, minHeight = 362, 350
+	} else if runtime.GOOS == "windows" {
+		// Leave a small clearance below the fifth row so the sixth row stays hidden.
+		height, minHeight = 415, 386
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title:     guiMainWindowTitle(guiDisplayEndpointPath(a.actualListen), a.dirty),

@@ -8,8 +8,22 @@ package main
 import (
 	"runtime"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
+
+// guiCloseWindowAfterFrame defers native window teardown until its current UI
+// callback has finished building the frame that handled the close action.
+func guiCloseWindowAfterFrame(window *mygo.Window) {
+	if window == nil || window.IsDestroyed() {
+		return
+	}
+	window.Update(func() {
+		if !window.IsDestroyed() {
+			window.Close()
+		}
+	})
+}
 
 // guiDialogEdgePadding gives macOS sheet contents room around their rounded window corners.
 func guiDialogEdgePadding(theme *ui.Theme) float32 {

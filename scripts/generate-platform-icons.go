@@ -9,6 +9,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 
@@ -38,12 +40,19 @@ func main() {
 		if err := os.WriteFile(path, iconPNG, 0o644); err != nil {
 			fatal(err)
 		}
-		if chunkType, ok := icnsChunkType(size); ok {
-			icns.WriteString(chunkType)
+		for _, chunk := range icnsChunks(size) {
+			chunkData := iconPNG
+			if chunk.argb {
+				chunkData, err = encodeICNSARGB(iconPNG, size)
+				if err != nil {
+					fatal(err)
+				}
+			}
+			icns.WriteString(chunk.typeCode)
 			var chunkSize [4]byte
-			binary.BigEndian.PutUint32(chunkSize[:], uint32(len(iconPNG)+8))
+			binary.BigEndian.PutUint32(chunkSize[:], uint32(len(chunkData)+8))
 			icns.Write(chunkSize[:])
-			icns.Write(iconPNG)
+			icns.Write(chunkData)
 		}
 	}
 	icoData, err := ico.EncodePNGFrames(frames)
@@ -59,17 +68,103 @@ func main() {
 	}
 }
 
-func icnsChunkType(size int) (string, bool) {
+type icnsChunk struct {
+	typeCode string
+	argb     bool
+}
+
+func icnsChunks(size int) []icnsChunk {
 	switch size {
 	case 16:
-		return "icp4", true
+		return []icnsChunk{{typeCode: "ic04", argb: true}}
 	case 32:
-		return "icp5", true
+		return []icnsChunk{
+			{typeCode: "ic05", argb: true},
+			{typeCode: "ic11"}, // 16px Retina slot; reuse the 32px PNG representation.
+		}
 	case 256:
-		return "ic08", true
+		return []icnsChunk{{typeCode: "ic08"}}
 	default:
-		return "", false
+		return nil
 	}
+}
+
+// Encode the 1x Finder slots as ARGB because macOS renders PNG payloads in icp4/icp5 as noise.
+func encodeICNSARGB(iconPNG []byte, size int) ([]byte, error) {
+	icon, err := png.Decode(bytes.NewReader(iconPNG))
+	if err != nil {
+		return nil, fmt.Errorf("decode %dpx icon for ICNS: %w", size, err)
+	}
+	if bounds := icon.Bounds(); bounds.Dx() != size || bounds.Dy() != size {
+		return nil, fmt.Errorf("decode %dpx icon for ICNS: got %dx%d", size, bounds.Dx(), bounds.Dy())
+	}
+
+	pixelCount := size * size
+	planes := [4][]byte{
+		make([]byte, pixelCount),
+		make([]byte, pixelCount),
+		make([]byte, pixelCount),
+		make([]byte, pixelCount),
+	}
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			pixel := color.NRGBAModel.Convert(icon.At(x, y)).(color.NRGBA)
+			index := y*size + x
+			planes[0][index] = pixel.A
+			planes[1][index] = pixel.R
+			planes[2][index] = pixel.G
+			planes[3][index] = pixel.B
+		}
+	}
+
+	var payload bytes.Buffer
+	payload.WriteString("ARGB")
+	for _, plane := range planes {
+		payload.Write(encodeICNSPackBits(plane))
+	}
+	return payload.Bytes(), nil
+}
+
+// PackBits encodes each ICNS color plane using the repeat and literal run limits from the format.
+func encodeICNSPackBits(data []byte) []byte {
+	var encoded bytes.Buffer
+	for index := 0; index < len(data); {
+		runLength := icnsRunLength(data, index)
+		if runLength >= 3 {
+			encoded.WriteByte(0x80 | byte(runLength-3))
+			encoded.WriteByte(data[index])
+			index += runLength
+			continue
+		}
+
+		literalStart := index
+		index += runLength
+		for index < len(data) && index-literalStart < 128 {
+			runLength = icnsRunLength(data, index)
+			if runLength >= 3 {
+				break
+			}
+			remaining := 128 - (index - literalStart)
+			if runLength > remaining {
+				index += remaining
+				break
+			}
+			index += runLength
+		}
+
+		literal := data[literalStart:index]
+		encoded.WriteByte(byte(len(literal) - 1))
+		encoded.Write(literal)
+	}
+	return encoded.Bytes()
+}
+
+func icnsRunLength(data []byte, start int) int {
+	length := 1
+	for start+length < len(data) && data[start+length] == data[start] && length < 130 {
+		length++
+	}
+	return length
 }
 
 func fatal(err error) {

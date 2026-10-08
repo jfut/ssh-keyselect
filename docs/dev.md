@@ -237,7 +237,7 @@ Compare separate processes with the same configuration, display scale, and windo
 
 #### Asset generation
 
-`assets/ssh-keyselect-logo.png` is the source artwork. `just gen-platform-icons` creates the multi-size ICO, Linux desktop PNGs, and macOS ICNS under the ignored `assets/gui/generated/` directory. `just gen-windows-icons` also generates ignored Windows `.syso` resources under `assets/gui/generated/windows/`.
+`assets/ssh-keyselect-logo.png` is the source artwork. `just gen-platform-icons` creates the multi-size ICO, Linux desktop PNGs, and macOS ICNS under the ignored `assets/gui/generated/` directory. The macOS ICNS uses ARGB payloads in its `ic04` and `ic05` 1x entries because macOS renders PNG payloads in the legacy `icp4` and `icp5` slots incorrectly. It also includes the 32px PNG as the `ic11` 16px Retina entry. `just gen-windows-icons` also generates ignored Windows `.syso` resources under `assets/gui/generated/windows/`.
 
 Source artwork is decoded lazily once. The application icon supplies the native default, while windows use a shared 32px image for sharp title-bar icons; the tray icon is generated at its requested size.
 

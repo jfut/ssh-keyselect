@@ -18,7 +18,6 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
-      - darwin
       - windows
     goarch:
       - amd64
@@ -40,6 +39,20 @@ builds:
           env:
             - SSH_KEYSELECT_TARGET_OS={{ .Os }}
             - SSH_KEYSELECT_TARGET_ARCH={{ .Arch }}
+  - id: ssh-keyselect-macos
+    binary: ssh-keyselect
+    main: ./cmd/ssh-keyselect
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
   - id: ssh-keyselect-gui
     binary: ssh-keyselect-gui
     main: ./cmd/ssh-keyselect-gui
@@ -49,7 +62,6 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
-      - darwin
       - windows
     goarch:
       - amd64
@@ -71,7 +83,25 @@ builds:
           env:
             - SSH_KEYSELECT_TARGET_OS={{ .Os }}
             - SSH_KEYSELECT_TARGET_ARCH={{ .Arch }}
-        - cmd: bash -c 'if [ "{{ .Os }}" = darwin ]; then bash ./scripts/package-macos-gui-app.sh "{{ .Path }}"; fi'
+  - id: ssh-keyselect-gui-macos
+    binary: ssh-keyselect-gui
+    main: ./cmd/ssh-keyselect-gui
+    tags:
+      - gui
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+    hooks:
+      post:
+        - cmd: bash ./scripts/package-macos-gui-app.sh "{{ .Path }}"
           env:
             - APP_VERSION={{ .Version }}
 
@@ -108,15 +138,31 @@ archives:
     files:
       - LICENSE
       - CREDITS
-      # Only Darwin builds create an app bundle; match the archive OS to prevent cross-platform inclusion.
-      - src: "dist/ssh-keyselect-gui_{{ .Os }}_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/Info.plist"
-        dst: ssh-keyselect-gui.app/Contents
-      - src: "dist/ssh-keyselect-gui_{{ .Os }}_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/PkgInfo"
-        dst: ssh-keyselect-gui.app/Contents
-      - src: "dist/ssh-keyselect-gui_{{ .Os }}_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/MacOS/ssh-keyselect-gui"
-        dst: ssh-keyselect-gui.app/Contents/MacOS
-      - src: "dist/ssh-keyselect-gui_{{ .Os }}_{{ .Arch }}*/ssh-keyselect-gui.app/Contents/Resources/ssh-keyselect.icns"
-        dst: ssh-keyselect-gui.app/Contents/Resources
+  # macOS archives use a Finder app bundle and omit the standalone GUI executable.
+  - id: macos-app
+    ids:
+      - ssh-keyselect-macos
+    formats: ["tar.gz"]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    builds_info:
+      group: root
+      owner: root
+    files:
+      - LICENSE
+      - CREDITS
+      - src: "dist/ssh-keyselect-gui-macos_{{ .Os }}_{{ .Arch }}*/SSH KeySelect.app/Contents/Info.plist"
+        dst: "SSH KeySelect.app/Contents"
+      - src: "dist/ssh-keyselect-gui-macos_{{ .Os }}_{{ .Arch }}*/SSH KeySelect.app/Contents/PkgInfo"
+        dst: "SSH KeySelect.app/Contents"
+      - src: "dist/ssh-keyselect-gui-macos_{{ .Os }}_{{ .Arch }}*/SSH KeySelect.app/Contents/MacOS/ssh-keyselect-gui"
+        dst: "SSH KeySelect.app/Contents/MacOS"
+      - src: "dist/ssh-keyselect-gui-macos_{{ .Os }}_{{ .Arch }}*/SSH KeySelect.app/Contents/Resources/ssh-keyselect.icns"
+        dst: "SSH KeySelect.app/Contents/Resources"
 
 changelog:
   sort: asc

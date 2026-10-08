@@ -32,10 +32,10 @@ With agent forwarding and `Auto Select Off`, a remote process such as Git or a n
 
 ### Windows, macOS, and Linux
 
-1. Download an archive from [Releases](https://github.com/jfut/ssh-keyselect/releases). It includes the standalone `ssh-keyselect-gui` application and `ssh-keyselect` for terminal use.
+1. Download an archive from [Releases](https://github.com/jfut/ssh-keyselect/releases). It includes `ssh-keyselect` for terminal use and a GUI application. On macOS, the GUI is distributed as `SSH KeySelect.app`.
 2. Extract it into a directory you control. Keep `LICENSE` and `CREDITS` with the executables.
-3. Add the executable directory to `PATH` to run the CLI or GUI from a terminal. On Windows, executable names end in `.exe`.
-4. On macOS, launch `ssh-keyselect-gui.app` from Finder or move it to your Applications folder.
+3. Add the executable directory to `PATH` to run the CLI. On Windows, executable names end in `.exe`; Windows and Linux also include a GUI executable for terminal launch.
+4. On macOS, launch `SSH KeySelect.app` from Finder or move it to your Applications folder.
 
 Windows release executables are currently unsigned. See the [Code signing policy](#code-signing-policy) for the planned signing scope and current status.
 
@@ -108,7 +108,7 @@ The GUI can start without an upstream agent. Configure its endpoints in Settings
 
 #### Shell
 
-For Git Bash ([Git for Windows](https://gitforwindows.org/)), macOS, and Linux, start the GUI and set `SSH_AUTH_SOCK` to its default Listen endpoint:
+For Git Bash ([Git for Windows](https://gitforwindows.org/)) and Linux, start the GUI and set `SSH_AUTH_SOCK` to its default Listen endpoint:
 
 ```bash
 ssh-keyselect-gui &
@@ -240,7 +240,7 @@ The terminal picker displays, in order:
 
 ### Command options
 
-Run `ssh-keyselect-gui` to start the GUI. Its options are:
+On Windows and Linux, run `ssh-keyselect-gui` to start the GUI and pass command options. macOS users launch `SSH KeySelect.app` from Finder and configure it through the GUI menus and Settings.
 
 |       Command       |                                         Options                                         |
 | ------------------- | --------------------------------------------------------------------------------------- |
@@ -256,7 +256,7 @@ The GUI reads TOML from `$XDG_CONFIG_HOME/ssh-keyselect/config.toml` when `XDG_C
 | Linux    | `~/.config/ssh-keyselect/config.toml`                                                                       |
 | macOS    | `~/Library/Application Support/ssh-keyselect/config.toml`                                                   |
 
-Use `--config FILE` to select another file. Command-line values override file values. The following environment variables also affect endpoint paths:
+On Windows and Linux, use `--config FILE` to select another file; command-line values override file values. On macOS, open or save configuration files through the GUI's File menu. The following environment variables also affect endpoint paths:
 
 - `SSH_KEYSELECT_LISTEN` overrides `agent.listen`.
 - When `agent.upstream` is empty, `UPSTREAM_SSH_AUTH_SOCK` takes precedence over `SSH_AUTH_SOCK`.
@@ -377,7 +377,7 @@ The agent protocol does not provide a hostname. Names matched from the default l
 2. Restore shell and Git changes:
    - Restore the previous `SSH_AUTH_SOCK` value or remove the setting from shell startup files and VS Code User Settings (JSON). If you changed VS Code's default profile for this setup, restore its previous value; remove the Git Bash profile if you added it only for KeySelect and no longer need it.
    - Restore earlier `ssh`, `GIT_SSH_COMMAND`, and `core.sshCommand` values. If you added only this README's examples, run `unalias ssh` and, in each affected repository, `git config --local --unset core.sshCommand`.
-3. Remove KeySelect wrappers, `PATH` entries, shortcuts, and program files. For archive installs, delete the distribution directory with its `LICENSE` and `CREDITS` files, plus any copied `ssh-keyselect-gui.app`. For package installs, remove the package with the package manager you used to install it.
+3. Remove KeySelect wrappers, `PATH` entries, shortcuts, and program files. For archive installs, delete the distribution directory with its `LICENSE` and `CREDITS` files, plus any copied `SSH KeySelect.app`. For package installs, remove the package with the package manager you used to install it.
 4. Optionally delete the GUI configuration files (see [Configuration](#configuration)), including files saved with Save As or `--config`, and diagnostic logs created with `--log-file`. Keep your upstream agent and SSH keys; they belong to your SSH setup.
 
 For RHEL-compatible Linux distributions:

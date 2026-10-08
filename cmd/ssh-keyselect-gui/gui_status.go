@@ -42,12 +42,15 @@ func guiMainWindowTitle(endpoint string, dirty bool) string {
 
 func (a *guiApp) start() {
 	a.uiStarted = true
-	// The application icon is also the default icon inherited by native windows.
-	icon, iconErr := guiassets.PNG(256)
-	if iconErr != nil {
-		a.logger.Warn("create application icon", "error", iconErr)
-	} else if err := mygo.App.Dock.SetIcon(icon); err != nil {
-		a.logger.Warn("set application icon", "error", err)
+	if runtime.GOOS != "darwin" {
+		// macOS takes the Dock icon from the app bundle's ICNS resource.
+		// Avoid replacing it with the source PNG, which drops the Finder icon treatment.
+		icon, iconErr := guiassets.PNG(256)
+		if iconErr != nil {
+			a.logger.Warn("create application icon", "error", iconErr)
+		} else if err := mygo.App.Dock.SetIcon(icon); err != nil {
+			a.logger.Warn("set application icon", "error", err)
+		}
 	}
 
 	a.createMainWindow()

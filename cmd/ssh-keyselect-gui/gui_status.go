@@ -124,6 +124,10 @@ func (a *guiApp) createMainWindow() {
 	window.OnMinimize(func() {
 		if a.tray != nil {
 			window.Hide()
+			if runtime.GOOS == "darwin" {
+				// Keep the menu bar icon available while the hidden window has no Dock entry.
+				mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
+			}
 		}
 	})
 	window.OnShow(func() { a.mainVisible.Store(true) })
@@ -566,6 +570,10 @@ func (a *guiApp) updateTrayAutoSelect() {
 func (a *guiApp) showMainWindow() {
 	if a.window == nil || a.window.IsDestroyed() {
 		a.createMainWindow()
+	}
+	if runtime.GOOS == "darwin" {
+		// Restore normal Dock and app switcher presence before showing the main window.
+		mygo.App.SetActivationPolicy(mygo.ActivationPolicyRegular)
 	}
 	// Hiding a minimized window may clear its minimized state on some backends.
 	// Restore hidden windows too, then show them through MyGo's normal lifecycle.

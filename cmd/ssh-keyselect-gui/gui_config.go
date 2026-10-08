@@ -18,6 +18,7 @@ import (
 	"github.com/jfut/ssh-keyselect/assets/gui"
 	"github.com/jfut/ssh-keyselect/internal/branding"
 	"github.com/jfut/ssh-keyselect/internal/config"
+	"github.com/jfut/ssh-keyselect/internal/guitable"
 	"github.com/jfut/ssh-keyselect/internal/listener"
 	"github.com/jfut/ssh-keyselect/internal/transport"
 )
@@ -348,10 +349,14 @@ func (a *guiApp) openSettings() {
 		mygo.Dialog.Error("Could not open settings.", err.Error())
 		return
 	}
-	height, minHeight := 430, 410
-	if runtime.GOOS == "darwin" {
-		// Keep the settings footer compact while leaving the rounded window edges clear.
-		height, minHeight = 400, 380
+	// Keep the settings footer compact while leaving room around its controls.
+	height, minHeight := 380, 380
+	switch runtime.GOOS {
+	case "darwin":
+		// Preserve extra space around the rounded macOS window edges.
+		height, minHeight = 360, 360
+	case "linux":
+		height, minHeight = 320, 320
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: "Settings", Parent: a.window, Modal: true,
@@ -412,7 +417,7 @@ func (s *guiSettingsState) view(c *ui.Context) {
 		s.window.Close()
 		return
 	}
-	theme := c.Theme()
+	theme := guitable.CompactTheme(c)
 	edgePadding := guiDialogEdgePadding(theme)
 	topPadding := theme.Space(1.5)
 	if runtime.GOOS == "darwin" {
@@ -455,7 +460,7 @@ func (s *guiSettingsState) endpointSection(c *ui.Context, theme *ui.Theme, title
 	section.Children(func() {
 		ui.Text(c, title).FontWeight(500)
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Socket path").Width(theme.Space(19)).Shrink(0)
+			ui.Text(c, "Socket path").Width(theme.Space(26)).Shrink(0)
 			input := ui.TextInput(c, path).Label("Socket path").Grow(1)
 			if upstream {
 				input.Placeholder("Leave blank to configure later")
@@ -466,7 +471,7 @@ func (s *guiSettingsState) endpointSection(c *ui.Context, theme *ui.Theme, title
 			}
 		})
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Mode").Width(theme.Space(19)).Shrink(0)
+			ui.Text(c, "Mode").Width(theme.Space(26)).Shrink(0)
 			if ui.Select(c, mode, guiTransportModeOptions(upstream)).Label("Mode").Grow(1).Changed() {
 				if upstream {
 					s.err = ""
@@ -486,7 +491,7 @@ func (s *guiSettingsState) loggingSection(c *ui.Context, theme *ui.Theme) {
 	section.Children(func() {
 		ui.Text(c, "Logging").FontWeight(500)
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Log file").Width(theme.Space(19)).Shrink(0)
+			ui.Text(c, "Log file").Width(theme.Space(26)).Shrink(0)
 			ui.TextInput(c, &s.logFile).Label("Log file").Placeholder("Leave blank to log to standard error").Grow(1)
 			browse := ui.Button(c, "Browse…").Disabled(s.browsingLog)
 			if browse.Clicked() {
@@ -494,7 +499,7 @@ func (s *guiSettingsState) loggingSection(c *ui.Context, theme *ui.Theme) {
 			}
 		})
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Level").Width(theme.Space(19)).Shrink(0)
+			ui.Text(c, "Level").Width(theme.Space(26)).Shrink(0)
 			ui.Select(c, &s.logLevel, []string{"off", "debug", "info", "warn", "error"}).Label("Log level").Grow(1)
 		})
 	})

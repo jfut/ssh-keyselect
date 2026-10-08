@@ -333,7 +333,6 @@ func (a *guiApp) connectionCard(c *ui.Context, theme *ui.Theme) {
 		})
 		ui.Column(c).Gap(theme.Space(1)).Children(func() {
 			a.endpointRow(c, theme, "Upstream", "UPSTREAM_SSH_AUTH_SOCK", false)
-			ui.Box(c).Height(1).Background(theme.Border)
 			a.endpointRow(c, theme, "Listen", "SSH_AUTH_SOCK", true)
 		})
 	})
@@ -366,8 +365,9 @@ func (a *guiApp) endpointRow(c *ui.Context, theme *ui.Theme, title, variable str
 	} else if modeErr != nil {
 		modeFill, modeInk = ui.Hex("#fff6e0"), ui.Hex("#b56b00")
 	}
+	controlHeight := theme.Space(8)
 	ui.Row(c).Gap(theme.Space(1.5)).AlignItems(ui.Center).Children(func() {
-		ui.Row(c).Width(theme.Space(70)).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Width(theme.Space(60)).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
 			ui.Box(c).Size(theme.Space(0.75), theme.Space(11)).Radius(theme.Space(0.5)).Background(marker).Shrink(0)
 			ui.Column(c).Gap(theme.Space(0.5)).Grow(1).Children(func() {
 				ui.Text(c, title).FontSize(theme.Rem(0.95)).SingleLine()
@@ -382,17 +382,17 @@ func (a *guiApp) endpointRow(c *ui.Context, theme *ui.Theme, title, variable str
 		})
 		path := ui.Text(c, displayPath).SingleLine().Selectable().Tooltip(displayPath).
 			Padding(theme.Space(1), theme.Space(2)).Background(ui.Hex("#f7f9fc")).
-			Border(1, theme.Border).Radius(theme.Space(1)).Grow(1).MinWidth(theme.Space(35))
+			Border(1, theme.Border).Radius(theme.Space(1)).Grow(1).MinWidth(theme.Space(35)).Height(controlHeight)
 		if endpoint == "" {
 			path.TextColor(theme.TextMuted)
 		}
 		copyButton := guiIconButton(c, guiCopyIcon, "Copy "+variable+" export command", false, theme)
-		copyButton.Size(theme.Space(8), theme.Space(8)).Disabled(endpoint == "")
+		copyButton.Size(theme.Space(8), controlHeight).Disabled(endpoint == "")
 		if copyButton.Clicked() && endpoint != "" {
 			pathToCopy := guiEndpointPathFromDisplay(displayPath)
 			mygo.Clipboard.WriteText(guiEndpointExportCommand(variable, pathToCopy))
 		}
-		badge := ui.Row(c).Width(theme.Space(72)).Padding(theme.Space(1.5), theme.Space(2)).
+		badge := ui.Row(c).Width(theme.Space(72)).Height(controlHeight).Padding(theme.Space(1.5), theme.Space(2)).
 			Background(modeFill).Radius(theme.Space(1)).AlignItems(ui.Center)
 		badge.Children(func() {
 			label := "Not configured"

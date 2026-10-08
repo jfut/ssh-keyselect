@@ -254,7 +254,6 @@ type guiPickerState struct {
 	selected       int
 	query          string
 	lastQuery      string
-	status         string
 	err            string
 	refreshing     bool
 	hasSelection   bool
@@ -332,18 +331,19 @@ func (p *guiPickerState) view(c *ui.Context) {
 			}
 		})
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
+			// Match the main window's Keys badge beside the picker count.
+			ui.Text(c, "Keys").FontSize(theme.Rem(0.9)).TextColor(ui.Hex("#1870de")).
+				Background(ui.Hex("#e8f2ff")).Padding(theme.Space(0.5), theme.Space(1.5)).Radius(theme.Space(1.5))
 			ui.Text(c, fmt.Sprintf("%d/%d", len(matches), len(p.identities))).FontSize(theme.Rem(0.9)).TextColor(theme.TextMuted)
 			if p.err != "" {
 				ui.Text(c, p.err).SingleLine().TextColor(theme.Danger).Grow(1)
-			} else if p.status != "" {
-				ui.Text(c, p.status).SingleLine().TextColor(theme.TextMuted).Grow(1)
 			} else {
 				ui.Spacer(c)
 			}
 			refresh := ui.PrimaryButton(c, "").Label("Refresh keys").Tooltip("Refresh keys").
-				Padding(0).Size(theme.Space(6), theme.Space(6)).Disabled(p.refresh == nil || p.refreshing)
+				Padding(0).Size(theme.Space(7), theme.Space(7)).Disabled(p.refresh == nil || p.refreshing)
 			refresh.Children(func() {
-				ui.Icon(c, guiPickerRefreshIcon).Size(theme.Space(3.5), theme.Space(3.5))
+				ui.Icon(c, guiPickerRefreshIcon).Size(theme.Space(4), theme.Space(4))
 			})
 			if refresh.Clicked() {
 				p.refreshKeys()
@@ -447,7 +447,7 @@ func (p *guiPickerState) refreshKeys() {
 		return
 	}
 	p.refreshing = true
-	p.err, p.status = "", ""
+	p.err = ""
 	p.window.Invalidate()
 	go func() {
 		refreshCtx, cancel := context.WithTimeout(p.ctx, upstream.RequestTimeout)
@@ -473,7 +473,6 @@ func (p *guiPickerState) refreshKeys() {
 			if len(p.identities) == 0 {
 				p.selected = -1
 			}
-			p.status = fmt.Sprintf("Refreshed %d available keys.", len(p.identities))
 		})
 	}()
 }

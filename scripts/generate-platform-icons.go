@@ -25,7 +25,7 @@ func main() {
 		fatal(err)
 	}
 
-	sizes := []int{16, 24, 32, 48, 256}
+	sizes := []int{16, 24, 32, 48, 64, 128, 256}
 	frames := make([][]byte, 0, len(sizes))
 	var icns bytes.Buffer
 	icns.WriteString("icns")
@@ -82,8 +82,15 @@ func icnsChunks(size int) []icnsChunk {
 			{typeCode: "ic05", argb: true},
 			{typeCode: "ic11"}, // 16px Retina slot; reuse the 32px PNG representation.
 		}
+	case 64:
+		return []icnsChunk{{typeCode: "ic12"}} // 32px Retina slot.
+	case 128:
+		return []icnsChunk{{typeCode: "ic07"}}
 	case 256:
-		return []icnsChunk{{typeCode: "ic08"}}
+		return []icnsChunk{
+			{typeCode: "ic08"},
+			{typeCode: "ic13"}, // 128px Retina slot; reuse the 256px PNG representation.
+		}
 	default:
 		return nil
 	}

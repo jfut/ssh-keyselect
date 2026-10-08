@@ -6,7 +6,7 @@ set -euo pipefail
 
 # Wrap the already-built GUI binary in a standard Finder application bundle.
 binary_path=$1
-bundle_path="${binary_path}.app"
+bundle_path="${binary_path%/*}/SSH KeySelect.app"
 contents_path="$bundle_path/Contents"
 
 rm -rf "$bundle_path"

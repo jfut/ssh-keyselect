@@ -292,9 +292,9 @@ The build commands have these effects:
 - `just snapshot` builds a local GoReleaser snapshot.
 - `just release` runs GoReleaser without publishing.
 
-Release archives contain both executables, `LICENSE`, and `CREDITS`. Linux packages install the license files under `/usr/share/doc/ssh-keyselect` and install the GUI desktop entry and PNG icons.
+Linux and Windows release archives contain both executables, `LICENSE`, and `CREDITS`. macOS archives contain the CLI executable, `SSH KeySelect.app`, `LICENSE`, and `CREDITS`; they omit the standalone GUI executable. Linux packages install the license files under `/usr/share/doc/ssh-keyselect` and install the GUI desktop entry and PNG icons.
 
-Only macOS archives include `ssh-keyselect-gui.app` for Finder launches. The Darwin GUI post-build hook creates this bundle, and archive file globs match both `.Os` and `.Arch` so it cannot be included in Linux or Windows archives. Windows release binaries embed their icon; the GUI executable uses the GUI subsystem.
+The macOS GUI post-build hook creates `SSH KeySelect.app` for Finder launches. Separate Darwin build IDs let the macOS archive contain the CLI and app bundle without the standalone GUI executable. The bundle contains the GUI executable and icon. Windows release binaries embed their icon; the GUI executable uses the GUI subsystem.
 
 ### Publishing
 

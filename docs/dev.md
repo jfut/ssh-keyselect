@@ -127,6 +127,10 @@ Every upstream agent implementation supports opening a session. Identity-list an
 
 Signing also limits connection establishment and binding replay to 10 seconds, but waits for the signature using the client connection's context. Upstream confirmation dialogs and hardware-key touch prompts can therefore stay open longer. Client disconnection or cancellation closes the upstream connection and interrupts the wait. Time spent choosing a key is excluded from upstream request deadlines.
 
+Interactive identity selection has its own deadline. It starts after upstream identity listing completes and immediately before the selector is called; listing still has its independent 10-second request deadline. Selector requests are serialized, so time spent waiting in the selector queue counts toward the deadline and a request may expire before its picker opens. The GUI applies `agent.selection_timeout`; `ssh-keyselect ssh` accepts `--selection-timeout`. Both default to 120 seconds and accept 1 through 86,399 seconds. On expiry, the proxy returns an empty identities answer and closes the frontend connection to release its handler and reader.
+
+The GUI picker derives the remaining seconds from the selection context deadline and invalidates its window once per second. When the request expires, it keeps the window open at `Timeout 0s` with a retry message, rejects selection and refresh actions, and releases the selector queue for a new request. Shutdown tracks and closes expired windows too. The terminal picker enforces the selection deadline without displaying a countdown.
+
 ### Display text sanitization
 
 Upstream identity parsing validates the complete public-key blob with `ssh.ParsePublicKey`, including the algorithm, key fields, and trailing data, before deriving display metadata. Unsupported or malformed keys reject the identity response. Parsing errors do not echo untrusted algorithm text.

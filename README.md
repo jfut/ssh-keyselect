@@ -200,10 +200,8 @@ Long comments in CLI tables are shortened with an ellipsis for display. The orig
 
 The wrapper options go before `--`; arguments after it are passed to OpenSSH.
 
-|             Command             |                                          Options                                          |
-| ------------------------------- | ----------------------------------------------------------------------------------------- |
-| `ssh-keyselect ssh`             | `--upstream`, `--upstream-mode`, `--listen`, `--listen-mode`, `--log-level`, `--log-file` |
-| `ssh-keyselect list` and `test` | `--upstream`, `--upstream-mode`                                                           |
+- `ssh-keyselect ssh`: `--upstream`, `--upstream-mode`, `--listen`, `--listen-mode`, `--selection-timeout`, `--log-level`, `--log-file`
+- `ssh-keyselect list` and `ssh-keyselect test`: `--upstream`, `--upstream-mode`
 
 The terminal commands `ssh`, `list`, and `test` do not read TOML configuration files.
 
@@ -267,6 +265,15 @@ Use `--config FILE` to select another file. Command-line values override file va
 
 The configuration loader rejects unknown keys. Logging is off by default. Set `log.level` to enable it and optionally set `log.file` to append logs to a file. When `log.file` is empty, logs go to standard error.
 
+The key selection timeout defaults to 120 seconds. In GUI Settings, set `agent.selection_timeout`; for `ssh-keyselect ssh`, pass `--selection-timeout SECONDS`. The timeout starts after the available identities are retrieved and before the selector queue is entered. Waiting behind another open picker counts toward the timeout, so the GUI countdown can start below the configured value or a request can expire before its picker appears.
+
+If, after a timeout, the SSH client prints the errors below and the server's `/var/log/secure` contains `penalty: exceeded LoginGraceTime`, set the Key selection Timeout to match that server's `LoginGraceTime` value in seconds.
+
+```text
+kex_exchange_identification: read: Software caused connection abort
+banner exchange: Connection to <IP> port <Port>: Software caused connection abort
+```
+
 Example configuration for `Git Bash` on Windows, using a Cygwin-compatible listener:
 
 ```toml
@@ -281,6 +288,7 @@ listen = 'C:\Users\alice\.ssh\ssh-keyselect-agent.sock'
 
 upstream_mode = "auto"
 listen_mode = "cygwin"
+selection_timeout = 120 # seconds (1 to 86399)
 
 [log]
 file = ""
@@ -299,7 +307,7 @@ ssh user@example.org
 
 ### GUI controls
 
-- Open Settings from the Settings button or File > Settings. In the Logging section, set the log level and optional log file. Leaving the file empty writes logs to standard error.
+- Open Settings from the Settings button or File > Settings. In Key selection, set how many seconds a key request can wait for a choice (default 120); the picker shows a live countdown. If it reaches zero, the expired dialog stays open until dismissed, and its key choice is no longer available. In Logging, set the log level and optional log file. Leaving the file empty writes logs to standard error.
 - Apply activates endpoint and logging changes immediately. Use File > Save to store them.
 - The File menu opens, saves, and saves as TOML configuration files. The GUI prompts before closing with unsaved changes.
 - About shows the application version and third-party library license inventory. Full license notices are included in `CREDITS`.

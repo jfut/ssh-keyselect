@@ -15,6 +15,7 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/jfut/ssh-keyselect/internal/agentproxy"
 	"github.com/jfut/ssh-keyselect/internal/cmdutil"
@@ -137,6 +138,7 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 	}()
 	applyAgentSettings := func() {
 		r.agent.Set(upstream.EndpointAgent{Path: cfg.Agent.Upstream, Mode: cfg.Agent.UpstreamMode})
+		r.server.SetSelectionTimeout(time.Duration(cfg.Agent.SelectionTimeout) * time.Second)
 		if logFileChanged {
 			r.logOutput.replace(preparedLogFile)
 			preparedLogFile = nil

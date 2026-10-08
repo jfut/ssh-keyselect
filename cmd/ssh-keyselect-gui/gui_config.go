@@ -8,6 +8,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -175,7 +176,7 @@ func (a *guiApp) saveAsConfiguration() {
 			parent.Update(func() {
 				a.configPath = path
 				a.dirty = false
-				a.statusMessage = "Configuration saved."
+				a.statusMessage = ""
 				a.updateWindowTitle()
 			})
 		}
@@ -189,7 +190,7 @@ func (a *guiApp) saveConfigurationFromMenu() {
 	if err := a.saveCurrentConfig(); err != nil {
 		a.statusMessage = "Could not save configuration: " + err.Error()
 	} else {
-		a.statusMessage = "Configuration saved."
+		a.statusMessage = ""
 	}
 	if a.window != nil {
 		a.window.Invalidate()
@@ -329,6 +330,7 @@ type guiSettingsState struct {
 	upstreamMode       string
 	listenMode         string
 	logLevel           string
+	selectionTimeout   float64
 	initialListenMode  transport.Mode
 	previousListenMode string
 	lastFilesystemPath string
@@ -350,13 +352,13 @@ func (a *guiApp) openSettings() {
 		return
 	}
 	// Keep the settings footer compact while leaving room around its controls.
-	height, minHeight := 380, 380
+	height, minHeight := 460, 460
 	switch runtime.GOOS {
 	case "darwin":
 		// Preserve extra space around the rounded macOS window edges.
-		height, minHeight = 360, 360
+		height, minHeight = 440, 440
 	case "linux":
-		height, minHeight = 320, 320
+		height, minHeight = 400, 400
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: "Settings", Parent: a.window, Modal: true,
@@ -402,6 +404,7 @@ func newGUISettingsState(app *guiApp, cfg config.Config) (*guiSettingsState, err
 		listenPath:   guiDisplayEndpointPath(listenEndpoint),
 		logFile:      guiDisplayFilePath(cfg.Log.File),
 		upstreamMode: upstreamMode, listenMode: listenMode, logLevel: strings.ToLower(cfg.Log.Level),
+		selectionTimeout:  float64(cfg.Agent.SelectionTimeout),
 		initialListenMode: initialListenMode, previousListenMode: listenMode,
 		lastFilesystemPath: func() string {
 			if guiEndpointPathIsPipe(listenEndpoint) {
@@ -427,6 +430,7 @@ func (s *guiSettingsState) view(c *ui.Context) {
 		Gap(theme.Space(1.5)).Background(ui.Hex("#f5f8fc")).Children(func() {
 		s.endpointSection(c, theme, "Upstream", true)
 		s.endpointSection(c, theme, "Listen", false)
+		s.selectionSection(c, theme)
 		s.loggingSection(c, theme)
 		if s.err != "" {
 			ui.Text(c, s.err).TextColor(theme.Danger)
@@ -443,6 +447,22 @@ func (s *guiSettingsState) view(c *ui.Context) {
 			if apply.Clicked() {
 				s.apply()
 			}
+		})
+	})
+}
+
+// selectionSection controls the deadline for a pending interactive key choice.
+func (s *guiSettingsState) selectionSection(c *ui.Context, theme *ui.Theme) {
+	section := ui.Column(c).Shrink(0).Gap(theme.Space(1)).
+		Padding(theme.Space(1.5), theme.Space(2)).
+		Border(1, ui.Hex("#dce4ee")).Radius(theme.Space(2)).Background(ui.Hex("#ffffff"))
+	section.Children(func() {
+		ui.Text(c, "Key selection").FontWeight(500)
+		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "Timeout").Width(theme.Space(26)).Shrink(0)
+			// Keep 86400 editable so Apply can report the invalid endpoint instead of reverting it.
+			ui.NumberInput(c, &s.selectionTimeout, 1, 86400, 1).Label("Key selection timeout")
+			ui.Text(c, "seconds").TextColor(theme.TextMuted)
 		})
 	})
 }
@@ -571,6 +591,9 @@ func (s *guiSettingsState) upstreamEndpoint() (string, error) {
 }
 
 func (s *guiSettingsState) buildConfig() (config.Config, error) {
+	if math.Trunc(s.selectionTimeout) != s.selectionTimeout {
+		return config.Config{}, fmt.Errorf("key selection timeout must be a whole number of seconds")
+	}
 	cfg := s.cfg
 	upstreamMode := guiModeFromDisplay(s.upstreamMode)
 	upstreamEndpoint := ""
@@ -605,6 +628,7 @@ func (s *guiSettingsState) buildConfig() (config.Config, error) {
 	cfg.Agent.UpstreamMode = upstreamMode
 	cfg.Agent.Listen = listenEndpoint
 	cfg.Agent.ListenMode = listenMode
+	cfg.Agent.SelectionTimeout = int(s.selectionTimeout)
 	cfg.Log.File = config.ExpandPath(guiFilePathFromDisplay(s.logFile))
 	cfg.Log.Level = s.logLevel
 	if err := cfg.Validate(); err != nil {

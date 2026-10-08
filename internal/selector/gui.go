@@ -7,6 +7,7 @@ package selector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"runtime"
@@ -35,7 +36,7 @@ type GUISelector struct {
 	mu      sync.RWMutex
 	refresh func(context.Context) ([]identity.Identity, error)
 	parent  func() *mygo.Window
-	active  *mygo.Window
+	windows map[*mygo.Window]struct{}
 }
 
 // NewGUISelector creates a selector that is used after MyGo's application loop starts.
@@ -63,9 +64,12 @@ func (s *GUISelector) Stop() {
 	s.stopOnce.Do(func() {
 		close(s.stopped)
 		s.mu.RLock()
-		window := s.active
+		windows := make([]*mygo.Window, 0, len(s.windows))
+		for window := range s.windows {
+			windows = append(windows, window)
+		}
 		s.mu.RUnlock()
-		if window != nil {
+		for _, window := range windows {
 			window.Close()
 		}
 	})
@@ -144,6 +148,9 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 	}
 	window.OnClosed(func() {
 		close(focusStopped)
+		s.mu.Lock()
+		delete(s.windows, window)
+		s.mu.Unlock()
 		closed <- picker.result()
 	})
 	window.OnFocus(focusFilter)
@@ -157,7 +164,7 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 		window.Close()
 		return nil, ErrCancelled
 	default:
-		s.active = window
+		s.windows[window] = struct{}{}
 		s.mu.Unlock()
 	}
 	// Show the modal as soon as it is created so its parent cannot stay blocked
@@ -185,26 +192,43 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 			}
 		}
 	}()
-	stopClose := context.AfterFunc(ctx, window.Close)
-	defer stopClose()
-
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-focusStopped:
+					return
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					window.Invalidate()
+				}
+			}
+		}()
+	}
 	var selection guiSelectionResult
 	closedByUser := false
 	select {
 	case selection = <-closed:
 		closedByUser = true
 	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// The SSH request expires before the server's grace period, but keep
+			// the window visible so the user can see the timeout and dismiss it.
+			window.Update(func() {
+				picker.expired = true
+				picker.err = "Timed out. Close and retry SSH."
+			})
+			return nil, ctx.Err()
+		}
 		window.Close()
 		selection = <-closed
 	case <-s.stopped:
 		window.Close()
 		selection = <-closed
 	}
-	s.mu.Lock()
-	if s.active == window {
-		s.active = nil
-	}
-	s.mu.Unlock()
 	if closedByUser && ctx.Err() == nil {
 		select {
 		case <-s.stopped:
@@ -235,6 +259,9 @@ func (s *GUISelector) init() {
 		if s.stopped == nil {
 			s.stopped = make(chan struct{})
 		}
+		if s.windows == nil {
+			s.windows = make(map[*mygo.Window]struct{})
+		}
 	})
 }
 
@@ -256,6 +283,7 @@ type guiPickerState struct {
 	lastQuery      string
 	err            string
 	refreshing     bool
+	expired        bool
 	hasSelection   bool
 	chosen         identity.Identity
 	focusTime      uint32
@@ -325,7 +353,7 @@ func (p *guiPickerState) view(c *ui.Context) {
 				if table.Shortcut(ui.Cmd, ui.KeyC) && p.selected >= 0 && p.selected < len(matches) {
 					mygo.Clipboard.WriteText(guitable.IdentityCopyText(matches[p.selected].identity))
 				}
-				if table.Submitted() {
+				if table.Submitted() && !p.expired {
 					p.choose(matches)
 				}
 			}
@@ -340,8 +368,18 @@ func (p *guiPickerState) view(c *ui.Context) {
 			} else {
 				ui.Spacer(c)
 			}
+			if seconds, ok := selectionRemainingSeconds(p.ctx); ok {
+				// Keep the timeout label and its value together so the digits cannot be clipped.
+				timeout := ui.Row(c).Gap(theme.Space(0.5)).AlignItems(ui.Center).Shrink(0)
+				timeout.Children(func() {
+					ui.Text(c, "Timeout").SingleLine().Shrink(0).FontSize(theme.Rem(0.9)).TextColor(ui.Hex("#1870de")).
+						Background(ui.Hex("#e8f2ff")).Padding(theme.Space(0.5), theme.Space(1.5)).Radius(theme.Space(1.5))
+					ui.Text(c, fmt.Sprintf("%ds", seconds)).NoWrap().Width(theme.Space(14)).TextAlign(ui.End).Shrink(0).
+						FontSize(theme.Rem(0.9)).TextColor(theme.TextMuted).Padding(0, theme.Space(1.5))
+				})
+			}
 			refresh := ui.PrimaryButton(c, "").Label("Refresh keys").Tooltip("Refresh keys").
-				Padding(0).Size(theme.Space(7), theme.Space(7)).Disabled(p.refresh == nil || p.refreshing)
+				Padding(0).Size(theme.Space(7), theme.Space(7)).Disabled(p.refresh == nil || p.refreshing || p.expired || p.ctx.Err() != nil)
 			refresh.Children(func() {
 				ui.Icon(c, guiPickerRefreshIcon).Size(theme.Space(4), theme.Space(4))
 			})
@@ -401,7 +439,7 @@ func (p *guiPickerState) view(c *ui.Context) {
 			}
 			return true
 		})
-		if filter.Submitted() {
+		if filter.Submitted() && !p.expired {
 			p.choose(matches)
 		}
 	})
@@ -426,7 +464,7 @@ func (p *guiPickerState) matches() []identityMatch {
 }
 
 func (p *guiPickerState) choose(matches []identityMatch) {
-	if p.selected < 0 || p.selected >= len(matches) {
+	if p.expired || p.ctx.Err() != nil || p.selected < 0 || p.selected >= len(matches) {
 		return
 	}
 	p.chosen = matches[p.selected].identity
@@ -443,7 +481,7 @@ func (p *guiPickerState) result() guiSelectionResult {
 }
 
 func (p *guiPickerState) refreshKeys() {
-	if p.refresh == nil || p.refreshing {
+	if p.refresh == nil || p.refreshing || p.expired || p.ctx.Err() != nil {
 		return
 	}
 	p.refreshing = true

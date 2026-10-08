@@ -16,16 +16,22 @@ import (
 	"github.com/jfut/ssh-keyselect/internal/transport"
 )
 
+const (
+	defaultSelectionTimeoutSeconds = 120
+	maxSelectionTimeoutSeconds     = 86399
+)
+
 type Config struct {
 	Agent AgentConfig `toml:"agent"`
 	Log   LogConfig   `toml:"log"`
 }
 
 type AgentConfig struct {
-	Listen       string         `toml:"listen"`
-	Upstream     string         `toml:"upstream"`
-	UpstreamMode transport.Mode `toml:"upstream_mode"`
-	ListenMode   transport.Mode `toml:"listen_mode"`
+	Listen           string         `toml:"listen"`
+	Upstream         string         `toml:"upstream"`
+	UpstreamMode     transport.Mode `toml:"upstream_mode"`
+	ListenMode       transport.Mode `toml:"listen_mode"`
+	SelectionTimeout int            `toml:"selection_timeout"`
 }
 
 type LogConfig struct {
@@ -39,10 +45,11 @@ type saveConfig struct {
 }
 
 type saveAgentConfig struct {
-	Listen       tomlPath       `toml:"listen"`
-	Upstream     tomlPath       `toml:"upstream"`
-	UpstreamMode transport.Mode `toml:"upstream_mode"`
-	ListenMode   transport.Mode `toml:"listen_mode"`
+	Listen           tomlPath       `toml:"listen"`
+	Upstream         tomlPath       `toml:"upstream"`
+	UpstreamMode     transport.Mode `toml:"upstream_mode"`
+	ListenMode       transport.Mode `toml:"listen_mode"`
+	SelectionTimeout int            `toml:"selection_timeout"`
 }
 
 type tomlPath string
@@ -72,10 +79,11 @@ func isTOMLLiteralString(value string) bool {
 func configForSave(cfg Config) saveConfig {
 	return saveConfig{
 		Agent: saveAgentConfig{
-			Listen:       tomlPath(cfg.Agent.Listen),
-			Upstream:     tomlPath(cfg.Agent.Upstream),
-			UpstreamMode: cfg.Agent.UpstreamMode,
-			ListenMode:   cfg.Agent.ListenMode,
+			Listen:           tomlPath(cfg.Agent.Listen),
+			Upstream:         tomlPath(cfg.Agent.Upstream),
+			UpstreamMode:     cfg.Agent.UpstreamMode,
+			ListenMode:       cfg.Agent.ListenMode,
+			SelectionTimeout: cfg.Agent.SelectionTimeout,
 		},
 		Log: cfg.Log,
 	}
@@ -84,8 +92,11 @@ func configForSave(cfg Config) saveConfig {
 // Default returns conservative defaults for GUI and terminal commands.
 func Default() Config {
 	return Config{
-		Agent: AgentConfig{UpstreamMode: transport.Auto, ListenMode: transport.Auto},
-		Log:   LogConfig{Level: "off"},
+		Agent: AgentConfig{
+			UpstreamMode: transport.Auto, ListenMode: transport.Auto,
+			SelectionTimeout: defaultSelectionTimeoutSeconds,
+		},
+		Log: LogConfig{Level: "off"},
 	}
 }
 
@@ -189,6 +200,9 @@ func Save(path string, cfg Config) error {
 
 // Validate rejects configuration that this release cannot safely honor.
 func (c Config) Validate() error {
+	if c.Agent.SelectionTimeout < 1 || c.Agent.SelectionTimeout > maxSelectionTimeoutSeconds {
+		return fmt.Errorf("agent.selection_timeout must be between 1 and %d seconds", maxSelectionTimeoutSeconds)
+	}
 	if _, err := transport.ParseMode(string(c.Agent.UpstreamMode)); err != nil {
 		return fmt.Errorf("agent.upstream_mode: %w", err)
 	}

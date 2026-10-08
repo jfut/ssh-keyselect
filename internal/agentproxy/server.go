@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jfut/ssh-keyselect/internal/identity"
@@ -26,17 +27,21 @@ import (
 
 const (
 	// Bound frontend resources even when forwarded clients leave connections open.
-	maxClientConnections   = 128
-	clientFrameReadTimeout = 10 * time.Second
+	maxClientConnections    = 128
+	clientFrameReadTimeout  = 10 * time.Second
+	defaultSelectionTimeout = 120 * time.Second
 )
+
+var errSelectionTimeout = errors.New("identity selection timed out")
 
 // Server serves SSH agent requests while isolating authorization state per client connection.
 type Server struct {
-	Agent        upstream.Agent
-	Selector     selector.Selector
-	Logger       *slog.Logger
-	autoSelectMu sync.RWMutex
-	autoSelect   bool
+	Agent            upstream.Agent
+	Selector         selector.Selector
+	Logger           *slog.Logger
+	autoSelectMu     sync.RWMutex
+	autoSelect       bool
+	selectionTimeout atomic.Int64
 }
 
 // SetAutoSelect temporarily bypasses the picker and exposes every upstream identity.
@@ -51,6 +56,21 @@ func (s *Server) AutoSelect() bool {
 	s.autoSelectMu.RLock()
 	defer s.autoSelectMu.RUnlock()
 	return s.autoSelect
+}
+
+// SetSelectionTimeout bounds how long an agent request can wait for a key choice.
+func (s *Server) SetSelectionTimeout(timeout time.Duration) {
+	if timeout <= 0 {
+		timeout = defaultSelectionTimeout
+	}
+	s.selectionTimeout.Store(int64(timeout))
+}
+
+func (s *Server) selectionTimeoutDuration() time.Duration {
+	if timeout := time.Duration(s.selectionTimeout.Load()); timeout > 0 {
+		return timeout
+	}
+	return defaultSelectionTimeout
 }
 
 // Serve accepts frontend connections until ctx is cancelled or the listener fails.
@@ -212,7 +232,21 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 					available, err := listAgent(ctx, s.Agent, upstreamSessionBinds, requestTimeout)
 					var chosen []identity.Identity
 					if err == nil {
-						chosen, err = s.selectAvailableIdentities(ctx, log, selectionContext(sessionBinds), available)
+						selectionCtx, cancelSelection := s.newSelectionContext(ctx)
+						chosen, err = s.selectAvailableIdentities(selectionCtx, log, selectionContext(sessionBinds), available)
+						if errors.Is(selectionCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+							log.Warn("identity selection timed out", "timeout", s.selectionTimeoutDuration())
+							err = errSelectionTimeout
+						}
+						cancelSelection()
+					}
+					if errors.Is(err, errSelectionTimeout) {
+						// Let SSH continue as if no keys were selected, then release this timed-out client.
+						emptyResponse, marshalErr := protocol.MarshalIdentities(nil)
+						if marshalErr != nil || !writeResponse(conn, emptyResponse) {
+							return
+						}
+						return
 					}
 					if err != nil {
 						if ctx.Err() != nil {
@@ -388,6 +422,9 @@ func (s *Server) selectAvailableIdentities(ctx context.Context, logger *slog.Log
 		return identities, nil
 	}
 	chosen, err := s.Selector.Select(ctx, identities, requestContext)
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil, errSelectionTimeout
+	}
 	if err != nil {
 		if errors.Is(err, selector.ErrCancelled) {
 			logger.Info("identity selection cancelled")
@@ -402,6 +439,11 @@ func (s *Server) selectAvailableIdentities(ctx context.Context, logger *slog.Log
 		return nil, err
 	}
 	return chosen, nil
+}
+
+// newSelectionContext bounds the time spent waiting for a key choice.
+func (s *Server) newSelectionContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, s.selectionTimeoutDuration())
 }
 
 func selectionContext(bindings []verifiedSessionBind) selector.SelectionContext {

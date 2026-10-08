@@ -30,18 +30,41 @@ With agent forwarding and `Auto Select Off`, a remote process such as Git or a n
 
 ## Installation
 
-### Windows, macOS, and Linux
-
-1. Download an archive from [Releases](https://github.com/jfut/ssh-keyselect/releases). It includes `ssh-keyselect` for terminal use and a GUI application. On macOS, the GUI is distributed as `SSH KeySelect.app`.
-2. Extract it into a directory you control. Keep `LICENSE` and `CREDITS` with the executables.
-3. Add the executable directory to `PATH` to run the CLI. On Windows, executable names end in `.exe`; Windows and Linux also include a GUI executable for terminal launch.
-4. On macOS, launch `SSH KeySelect.app` from Finder or move it to your Applications folder.
-
-Windows release executables are currently unsigned. See the [Code signing policy](#code-signing-policy) for the planned signing scope and current status.
-
 SSH KeySelect does not install a background service or enable automatic startup. It creates its Listen endpoint while running.
 
-### RHEL-compatible Linux distributions
+### Windows
+
+1. Download a Windows archive from [Releases](https://github.com/jfut/ssh-keyselect/releases). It includes `ssh-keyselect.exe` for terminal use and `ssh-keyselect-gui.exe`.
+2. Extract it into a directory you control.
+3. Add the executable directory to `PATH` to run the CLI.
+
+Windows release executables are currently unsigned. See the [Code signing policy](#code-signing-policy) for the current status.
+
+### macOS
+
+1. Download a macOS archive from [Releases](https://github.com/jfut/ssh-keyselect/releases). It includes `ssh-keyselect` for terminal use and `SSH KeySelect.app` for Finder.
+2. Extract it into a directory you control.
+3. Verify the official archive against `checksums.txt`.
+4. Add the executable directory to `PATH` to run the CLI.
+5. After following the note below, launch `SSH KeySelect.app` from Finder or move it to your Applications folder.
+
+> [!CAUTION]
+> The macOS app and CLI are not signed with a Developer ID or notarized, so Gatekeeper may block them after download. After extracting the archive and verifying its checksum, run these commands from the extracted directory before opening the app or CLI:
+>
+> ```sh
+> xattr -dr com.apple.quarantine "SSH KeySelect.app"
+> xattr -dr com.apple.quarantine ssh-keyselect
+> ```
+>
+> These commands remove the download quarantine attribute; they do not add a trusted code signature. Once Developer ID signing and notarization are enabled, you can skip them but should continue verifying the archive checksum. See the [Code signing policy](#code-signing-policy) for the current status.
+
+### Linux
+
+1. Download a Linux archive from [Releases](https://github.com/jfut/ssh-keyselect/releases). It includes `ssh-keyselect` for terminal use and `ssh-keyselect-gui`.
+2. Extract it into a directory you control.
+3. Add the executable directory to `PATH` to run the CLI.
+
+#### RHEL-compatible distributions
 
 Download an RPM from [Releases](https://github.com/jfut/ssh-keyselect/releases) and install it directly, or configure the repository for DNF-managed installation.
 
@@ -67,7 +90,7 @@ dnf install ssh-keyselect
 
 See [Uninstallation](#uninstallation) for removal instructions.
 
-### Linux GUI runtime requirements
+#### Linux GUI runtime requirements
 
 The Linux GUI requires GTK 3. A system tray icon also requires `libayatana-appindicator3` and a desktop environment that displays AppIndicator icons. GNOME Shell does not show these icons by default.
 
@@ -84,7 +107,7 @@ gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com
 
 Sign out and back in if the icon does not appear after enabling the extension. The main window works without the AppIndicator library or extension.
 
-### Other Linux package formats
+#### Other Linux package formats
 
 Releases also include native packages for Debian and Ubuntu (`.deb`), Alpine Linux (`.apk`), and Arch Linux (`.pkg.tar.zst`). Termux packages are provided as `.deb` files. Download the package for your architecture from [Releases](https://github.com/jfut/ssh-keyselect/releases) and install it with `apt`, `apk`, or `pacman`, as appropriate.
 

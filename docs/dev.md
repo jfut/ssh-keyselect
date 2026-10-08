@@ -298,7 +298,7 @@ The build commands have these effects:
 
 Linux and Windows release archives contain both executables, `LICENSE`, and `CREDITS`. macOS archives contain the CLI executable, `SSH KeySelect.app`, `LICENSE`, and `CREDITS`; they omit the standalone GUI executable. Linux packages install the license files under `/usr/share/doc/ssh-keyselect` and install the GUI desktop entry and PNG icons.
 
-The macOS GUI post-build hook creates `SSH KeySelect.app` for Finder launches. Separate Darwin build IDs let the macOS archive contain the CLI and app bundle without the standalone GUI executable. The bundle contains the GUI executable and icon. Windows release binaries embed their icon; the GUI executable uses the GUI subsystem.
+The macOS GUI post-build hook creates `SSH KeySelect.app` for Finder launches. Separate Darwin build IDs let the macOS archive contain the CLI and app bundle without the standalone GUI executable. The bundle contains the GUI executable and icon. The current release workflow does not sign macOS artifacts with a Developer ID or notarize them, so Gatekeeper may block an app downloaded from a release. Windows release binaries embed their icon; the GUI executable uses the GUI subsystem.
 
 ### Publishing
 

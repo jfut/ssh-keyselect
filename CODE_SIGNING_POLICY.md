@@ -2,11 +2,11 @@
 
 ## Status
 
-The project intends to apply to SignPath Foundation for free code signing. The application has not been approved, and code signing is not yet in use. Windows release executables are currently unsigned.
+The project intends to apply to SignPath Foundation for free code signing. The application has not been approved, and code signing is not yet in use. Windows release executables are currently unsigned. macOS release apps and CLI binaries are not signed with a Developer ID and are not notarized.
 
 ## Planned signing scope
 
-If the application is accepted and signing is integrated, the planned scope is Windows Authenticode signing of `ssh-keyselect.exe` and `ssh-keyselect-gui.exe` for amd64 (x86-64) and arm64. Only this project's executables built from source in this repository will be submitted for signing. Linux RPM packages use jfut's RPM signing key separately. SSH authentication signatures continue to come from the user's upstream agent.
+If the application is accepted and signing is integrated, the planned scope is Windows Authenticode signing of `ssh-keyselect.exe` and `ssh-keyselect-gui.exe` for amd64 (x86-64) and arm64. No macOS signing or notarization workflow is currently configured. Only this project's executables built from source in this repository will be submitted for signing. Linux RPM packages use jfut's RPM signing key separately. SSH authentication signatures continue to come from the user's upstream agent.
 
 ## Team responsibilities
 

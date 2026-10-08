@@ -213,6 +213,10 @@ The GUI uses MyGo's Go-only `ui` package. Views rebuild from application state, 
 
 MyGo draws the UI with Metal on macOS, Direct3D 11 on Windows, and OpenGL on Linux. Native file dialogs, menus, clipboard access, and tray integration use MyGo's platform APIs. Linux needs GTK 3 at runtime; tray integration additionally needs `libayatana-appindicator3`.
 
+#### Settings layout
+
+Settings sections use compact, content-sized layouts, and the Cancel/Apply footer centers its buttons in the remaining window height. `openSettings` sets a fixed `Height` and `MinHeight` for each platform, so adding or removing rows changes the vertical space around those buttons. When changing Settings items, update both window dimensions to account for the rendered content change and preserve the existing clearance above and below the footer. Keep the section gaps and padding consistent, and compare Windows, macOS, and Linux layouts because native title bars and macOS rounded edges change the available content area.
+
 Before the MyGo event loop starts, `PathUserData` is set to the `ssh-keyselect` directory under the platform user configuration directory and that directory is created:
 
 - Windows: `%APPDATA%\ssh-keyselect`

@@ -351,12 +351,12 @@ func (a *guiApp) openSettings() {
 		mygo.Dialog.Error("Could not open settings.", err.Error())
 		return
 	}
-	// Keep the settings footer compact while leaving room around its controls.
+	// Keep the centered settings footer's vertical margins consistent across platforms.
 	height, minHeight := 460, 460
 	switch runtime.GOOS {
 	case "darwin":
-		// Preserve extra space around the rounded macOS window edges.
-		height, minHeight = 440, 440
+		// Leave rounded-edge clearance without adding excess space around the actions.
+		height, minHeight = 420, 420
 	case "linux":
 		height, minHeight = 400, 400
 	}

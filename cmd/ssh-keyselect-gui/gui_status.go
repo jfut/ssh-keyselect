@@ -195,14 +195,14 @@ func (a *guiApp) view(c *ui.Context) {
 			"Save the current configuration before closing?", "Cancel", "Discard", "Save") {
 		case 1:
 			a.closeConfirmed = true
-			a.window.Close()
+			guiCloseWindowAfterFrame(a.window)
 		case 2:
 			if err := a.saveCurrentConfig(); err != nil {
 				a.statusMessage = "Could not save configuration: " + err.Error()
 				a.closePrompt = true
 			} else {
 				a.closeConfirmed = true
-				a.window.Close()
+				guiCloseWindowAfterFrame(a.window)
 			}
 		}
 	}
@@ -600,7 +600,7 @@ func (a *guiApp) showAbout() {
 		theme := guitable.CompactTheme(c)
 		root := ui.Column(c).Fill().Padding(guiDialogEdgePadding(theme)).Gap(theme.Space(2)).Background(ui.Hex("#f5f8fc"))
 		if c.Shortcut(0, ui.KeyEscape) && a.aboutWindow != nil {
-			a.aboutWindow.Close()
+			guiCloseWindowAfterFrame(a.aboutWindow)
 			return
 		}
 		if root.Shortcut(ui.Cmd, ui.KeyC) {
@@ -633,7 +633,7 @@ func (a *guiApp) showAbout() {
 			})
 			guiDialogActionRow(c, theme, ui.End, func() {
 				if guiDialogActionButton(c, "OK", true, false).Clicked() && a.aboutWindow != nil {
-					a.aboutWindow.Close()
+					guiCloseWindowAfterFrame(a.aboutWindow)
 				}
 			})
 		})

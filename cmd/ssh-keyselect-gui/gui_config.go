@@ -417,7 +417,7 @@ func newGUISettingsState(app *guiApp, cfg config.Config) (*guiSettingsState, err
 
 func (s *guiSettingsState) view(c *ui.Context) {
 	if c.Shortcut(0, ui.KeyEscape) && s.window != nil {
-		s.window.Close()
+		guiCloseWindowAfterFrame(s.window)
 		return
 	}
 	theme := guitable.CompactTheme(c)
@@ -441,7 +441,7 @@ func (s *guiSettingsState) view(c *ui.Context) {
 		guiDialogActionFooter(c, theme, func() {
 			cancel := guiDialogActionButton(c, "Cancel", false, s.applying)
 			if cancel.Clicked() {
-				s.window.Close()
+				guiCloseWindowAfterFrame(s.window)
 			}
 			apply := guiDialogActionButton(c, "Apply", true, s.applying || s.browsingListen || s.browsingUpstream || s.browsingLog)
 			if apply.Clicked() {
@@ -689,7 +689,7 @@ func (s *guiSettingsState) apply() {
 			s.window.Invalidate()
 			return
 		}
-		s.window.Close()
+		guiCloseWindowAfterFrame(s.window)
 	})
 }
 

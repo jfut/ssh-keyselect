@@ -287,6 +287,7 @@ type guiPickerState struct {
 	hasSelection   bool
 	chosen         identity.Identity
 	focusTime      uint32
+	closePending   bool
 	searchOptions  []identityOption
 	optionsValid   bool
 	matchesCache   []identityMatch
@@ -308,7 +309,7 @@ func (p *guiPickerState) view(c *ui.Context) {
 	}
 	root := ui.Column(c).Fill().Padding(outerPadding).Gap(theme.Space(1.5))
 	if root.Shortcut(0, ui.KeyEscape) {
-		p.window.Close()
+		p.closeWindow()
 	}
 	root.Children(func() {
 		ui.Scroll(c).Height(theme.Space(36)).TrackScroll(&p.detailsScroll).
@@ -470,7 +471,17 @@ func (p *guiPickerState) choose(matches []identityMatch) {
 	p.chosen = matches[p.selected].identity
 	p.hasSelection = true
 	p.focusTime = capturePickerRestoreTimestamp()
-	p.window.Close()
+	p.closeWindow()
+}
+
+// closeWindow defers native destruction until MyGo finishes building this UI pass.
+func (p *guiPickerState) closeWindow() {
+	if p.closePending || p.window == nil {
+		return
+	}
+	p.closePending = true
+	window := p.window
+	window.Update(func() { window.Close() })
 }
 
 func (p *guiPickerState) result() guiSelectionResult {

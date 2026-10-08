@@ -416,8 +416,8 @@ func modeErrString(err error) string {
 	return err.Error()
 }
 
-func guiIconButton(c *ui.Context, icon *ui.SVG, label string, primary bool, theme *ui.Theme) *ui.Element {
-	var button *ui.Element
+func guiIconButton(c *ui.Context, icon *ui.SVG, label string, primary bool, theme *ui.Theme) ui.Element {
+	var button ui.Element
 	if primary {
 		button = ui.PrimaryButton(c, "")
 	} else {
@@ -429,7 +429,7 @@ func guiIconButton(c *ui.Context, icon *ui.SVG, label string, primary bool, them
 	return button
 }
 
-func guiCard(c *ui.Context) *ui.Element {
+func guiCard(c *ui.Context) ui.Element {
 	theme := c.Theme()
 	return ui.Column(c).Padding(theme.Space(2.5)).Gap(theme.Space(1.5)).
 		Background(theme.Surface).Border(1, theme.Border).Radius(theme.Space(3))

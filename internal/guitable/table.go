@@ -47,7 +47,7 @@ type IdentityRow struct {
 }
 
 // IdentityTable builds the common key table, including optional row numbers and sorting.
-func IdentityTable(c *ui.Context, state *ui.ListState, rows []IdentityRow, numbered, sortable bool) *ui.Element {
+func IdentityTable(c *ui.Context, state *ui.ListState, rows []IdentityRow, numbered, sortable bool) ui.Element {
 	theme := c.Theme()
 	columns := identityColumns(numbered, sortable)
 	selected := -1

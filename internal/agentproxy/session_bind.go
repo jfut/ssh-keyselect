@@ -36,8 +36,8 @@ type verifiedSessionBind struct {
 
 // verifySessionBind accepts only host keys that verify their session identifier signature.
 func verifySessionBind(message []byte) (verifiedSessionBind, error) {
-	// Keep one owned frame for both replay and the session-ID view used for duplicate checks.
-	message = bytes.Clone(message)
+	// The connection handler transfers ownership of this frame; retain it for replay
+	// and use its session-ID slice directly instead of copying up to 1 MiB again.
 	extension, err := protocol.ParseExtensionRequest(message)
 	if err != nil {
 		return verifiedSessionBind{}, err

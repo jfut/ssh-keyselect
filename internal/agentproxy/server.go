@@ -7,14 +7,13 @@ package agentproxy
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -565,11 +564,12 @@ func writeResponse(conn net.Conn, response []byte) bool {
 	return protocol.WriteFrame(conn, response) == nil
 }
 
+// newSessionID returns a process-unique log correlation ID, not an authentication token.
 func newSessionID() string {
-	var raw [6]byte
-	_, _ = rand.Read(raw[:])
-	return hex.EncodeToString(raw[:])
+	return strconv.FormatUint(sessionSequence.Add(1), 10)
 }
+
+var sessionSequence atomic.Uint64
 
 func (s *Server) logger() *slog.Logger {
 	if s.Logger != nil {

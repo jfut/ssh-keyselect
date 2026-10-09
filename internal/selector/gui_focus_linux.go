@@ -31,8 +31,8 @@ var pickerX11 struct {
 	xGetWindowAttributes       func(uintptr, uintptr, *pickerX11WindowAttributes) int32
 	xQueryTree                 func(uintptr, uintptr, *uintptr, *uintptr, *uintptr, *uint32) int32
 	xInternAtom                func(uintptr, *byte, int32) uintptr
-	xGetWindowProperty         func(uintptr, uintptr, uintptr, int64, int64, int32, uintptr, *uintptr, *int32, *uintptr, *uintptr, *uintptr) int32
-	xSendEvent                 func(uintptr, uintptr, int32, int64, *[24]uintptr) int32
+	xGetWindowProperty         func(uintptr, uintptr, uintptr, int, int, int32, uintptr, *uintptr, *int32, *uintptr, *uintptr, *uintptr) int32
+	xSendEvent                 func(uintptr, uintptr, int32, int, *[24]uintptr) int32
 	xFree                      func(uintptr) int32
 	xRaiseWindow               func(uintptr, uintptr) int32
 	xSetInputFocus             func(uintptr, uintptr, int32, uintptr) int32
@@ -46,18 +46,19 @@ var pickerX11 struct {
 // pickerX11WindowAttributes mirrors Xlib's XWindowAttributes so focus is
 // requested only after the window manager has mapped an input-capable window.
 type pickerX11WindowAttributes struct {
-	x, y, width, height, borderWidth, depth int32
-	visual, root                            uintptr
-	class                                   int32
-	bitGravity, winGravity, backingStore    int32
-	backingPlanes, backingPixel             uintptr
-	saveUnder                               int32
-	colormap                                uintptr
-	mapInstalled, mapState                  int32
-	allEventMasks, yourEventMask            uintptr
-	doNotPropagateMask                      uintptr
-	overrideRedirect                        int32
-	screen                                  uintptr
+	_, _, _, _, _, _ int32
+	_, _             uintptr
+	class            int32
+	_, _, _          int32
+	_, _             uintptr
+	_                int32
+	_                uintptr
+	_                int32
+	mapState         int32
+	_, _             uintptr
+	_                uintptr
+	_                int32
+	_                uintptr
 }
 
 // pickerX11ClientMessageEvent occupies the first part of Xlib's XEvent union.
@@ -69,7 +70,7 @@ type pickerX11ClientMessageEvent struct {
 	window      uintptr
 	messageType uintptr
 	format      int32
-	data        [5]int64
+	data        [5]uintptr
 }
 
 type pickerX11ReturnTarget struct {
@@ -358,8 +359,8 @@ func pickerX11RequestActivation(display uintptr, target pickerX11ReturnTarget, f
 	message.messageType = atom
 	message.format = 32
 	message.data[0] = x11ApplicationSource
-	message.data[1] = int64(focusTime)
-	mask := int64(x11SubstructureNotifyMask | x11SubstructureRedirectMask)
+	message.data[1] = uintptr(focusTime)
+	mask := int(x11SubstructureNotifyMask | x11SubstructureRedirectMask)
 	sent := pickerX11.xSendEvent(display, target.root, 0, mask, &event) != 0
 	runtime.KeepAlive(&event)
 	return sent

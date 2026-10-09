@@ -109,6 +109,8 @@ func DefaultPath() (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("locate user config directory: %w", err)
 		}
+	} else if !filepath.IsAbs(base) {
+		return "", errors.New("XDG_CONFIG_HOME must be an absolute path")
 	}
 	return filepath.Join(base, "ssh-keyselect", "config.toml"), nil
 }
@@ -189,11 +191,38 @@ func Save(path string, cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
-	if err := os.WriteFile(path, encoded.Bytes(), 0600); err != nil {
+	directory := filepath.Dir(path)
+	temporary, err := os.CreateTemp(directory, ".ssh-keyselect-config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary config file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = temporary.Close()
+		}
+		_ = os.Remove(temporaryPath)
+	}()
+	if err := temporary.Chmod(0600); err != nil {
+		return fmt.Errorf("set config file permissions: %w", err)
+	}
+	if _, err := temporary.Write(encoded.Bytes()); err != nil {
 		return fmt.Errorf("write config file: %w", err)
 	}
-	if err := os.Chmod(path, 0600); err != nil {
-		return fmt.Errorf("set config file permissions: %w", err)
+	if err := temporary.Sync(); err != nil {
+		return fmt.Errorf("sync config file: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		closed = true
+		return fmt.Errorf("close config file: %w", err)
+	}
+	closed = true
+	// Replace only after the complete temporary file is ready, so write failures
+	// leave the prior config intact. Unix rename is atomic; Windows does not
+	// guarantee atomic replacement. A symlink at path is replaced, not followed.
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("replace config file: %w", err)
 	}
 	return nil
 }

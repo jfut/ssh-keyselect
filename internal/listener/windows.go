@@ -83,7 +83,27 @@ func listenUnixSocket(path string) (net.Listener, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("listen on Windows Unix socket: %w", err)
 	}
-	var once sync.Once
-	cleanup := func() { once.Do(func() { _ = ln.Close() }) }
+	unixListener := ln.(*net.UnixListener)
+	// net.UnixListener unlinks by path on close; disable that behavior so a replacement is preserved.
+	unixListener.SetUnlinkOnClose(false)
+	created, err := os.Lstat(nativePath)
+	if err != nil {
+		_ = ln.Close()
+		return nil, nil, fmt.Errorf("inspect created Windows Unix socket: %w", err)
+	}
+	if created.Mode()&os.ModeSocket == 0 {
+		_ = ln.Close()
+		return nil, nil, fmt.Errorf("listen path was replaced during socket creation: %s", nativePath)
+	}
+	removeCreatedSocket := func() {
+		current, err := os.Lstat(nativePath)
+		if err == nil && os.SameFile(created, current) {
+			_ = os.Remove(nativePath)
+		}
+	}
+	cleanup := sync.OnceFunc(func() {
+		_ = ln.Close()
+		removeCreatedSocket()
+	})
 	return ln, cleanup, nil
 }

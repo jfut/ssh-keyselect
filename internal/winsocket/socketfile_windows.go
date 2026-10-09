@@ -134,7 +134,11 @@ func Listen(path string) (net.Listener, func(), error) {
 		return nil, nil, fmt.Errorf("listen on loopback TCP socket: %w", err)
 	}
 	port := uint16(tcpListener.Addr().(*net.TCPAddr).Port)
-	guidData := randomGUIDData()
+	guidData, err := randomGUIDData()
+	if err != nil {
+		_ = tcpListener.Close()
+		return nil, nil, fmt.Errorf("generate Cygwin socket GUID: %w", err)
+	}
 	guid := formatGUID(guidData)
 	fileText := fmt.Sprintf("!<socket >%d s %s", port, guid)
 	file, err := os.OpenFile(nativePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -142,32 +146,45 @@ func Listen(path string) (net.Listener, func(), error) {
 		_ = tcpListener.Close()
 		return nil, nil, fmt.Errorf("create compatibility socket file: %w", err)
 	}
+	fileInfo, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		_ = tcpListener.Close()
+		return nil, nil, fmt.Errorf("inspect created compatibility socket file: %w", err)
+	}
+	removeCreatedFile := func() {
+		current, err := os.Lstat(nativePath)
+		if err == nil && os.SameFile(fileInfo, current) {
+			_ = os.Remove(nativePath)
+		}
+	}
 	if _, err := io.WriteString(file, fileText); err != nil {
 		_ = file.Close()
-		_ = os.Remove(nativePath)
+		removeCreatedFile()
 		_ = tcpListener.Close()
 		return nil, nil, fmt.Errorf("write compatibility socket file: %w", err)
 	}
 	if err := file.Close(); err != nil {
-		_ = os.Remove(nativePath)
+		removeCreatedFile()
 		_ = tcpListener.Close()
 		return nil, nil, fmt.Errorf("close compatibility socket file: %w", err)
 	}
 	if err := setSystemFileAttribute(nativePath); err != nil {
-		_ = os.Remove(nativePath)
+		removeCreatedFile()
 		_ = tcpListener.Close()
 		return nil, nil, fmt.Errorf("mark compatibility socket file: %w", err)
 	}
-	fileInfo, err := os.Stat(nativePath)
-	if err != nil {
-		_ = os.Remove(nativePath)
+	current, err := os.Lstat(nativePath)
+	if err != nil || !os.SameFile(fileInfo, current) {
+		removeCreatedFile()
 		_ = tcpListener.Close()
-		return nil, nil, fmt.Errorf("inspect compatibility socket file: %w", err)
+		if err != nil {
+			return nil, nil, fmt.Errorf("inspect compatibility socket file: %w", err)
+		}
+		return nil, nil, fmt.Errorf("compatibility socket path changed during setup: %s", nativePath)
 	}
 	ln := newCygwinListener(tcpListener, guidData, func() {
-		if current, err := os.Stat(nativePath); err == nil && os.SameFile(fileInfo, current) {
-			_ = os.Remove(nativePath)
-		}
+		removeCreatedFile()
 	})
 	cleanup := func() { _ = ln.Close() }
 	return ln, cleanup, nil
@@ -206,12 +223,14 @@ func parseGUID(value string) ([16]byte, error) {
 	return result, nil
 }
 
-func randomGUIDData() [16]byte {
+func randomGUIDData() ([16]byte, error) {
 	var data [16]byte
-	_, _ = rand.Read(data[:])
+	if _, err := rand.Read(data[:]); err != nil {
+		return [16]byte{}, err
+	}
 	data[6] = (data[6] & 0x0f) | 0x40
 	data[8] = (data[8] & 0x3f) | 0x80
-	return data
+	return data, nil
 }
 
 func formatGUID(data [16]byte) string {

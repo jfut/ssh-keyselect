@@ -271,7 +271,7 @@ On Windows and Linux, run `ssh-keyselect-gui` to start the GUI and pass command 
 
 ### Configuration
 
-The GUI reads TOML from `$XDG_CONFIG_HOME/ssh-keyselect/config.toml` when `XDG_CONFIG_HOME` is set. Otherwise, it uses the platform's user configuration directory:
+If `XDG_CONFIG_HOME` is set, it must be an absolute path and the GUI reads TOML from `$XDG_CONFIG_HOME/ssh-keyselect/config.toml`. If it is unset, the GUI uses the platform's user configuration directory:
 
 | Platform |                                                Default path                                                 |
 | -------- | ----------------------------------------------------------------------------------------------------------- |
@@ -284,7 +284,7 @@ On Windows and Linux, use `--config FILE` to select another file; command-line v
 - `SSH_KEYSELECT_LISTEN` overrides `agent.listen`.
 - When `agent.upstream` is empty, `UPSTREAM_SSH_AUTH_SOCK` takes precedence over `SSH_AUTH_SOCK`.
 - Environment variables and a leading `~` are expanded in configured paths using the GUI process environment.
-- If a filesystem entry already exists at the configured Listen path when the GUI starts, the proxy starts as `Not configured` and leaves that entry untouched.
+- If the configured Listen endpoint is already active or blocked by a non-socket file, the GUI starts with the proxy `Not configured`. Unix stale sockets owned by the current user can be reclaimed when the proxy starts.
 
 The configuration loader rejects unknown keys. Logging is off by default. Set `log.level` to enable it and optionally set `log.file` to append logs to a file. When `log.file` is empty, logs go to standard error.
 

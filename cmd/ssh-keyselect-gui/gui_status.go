@@ -87,9 +87,10 @@ func (a *guiApp) createMainWindow() {
 	// Windows dimensions are the default; adjust other platforms to show five key
 	// rows.
 	width, height, minHeight := 920, 415, 385
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		height, minHeight = 362, 332
-	} else if runtime.GOOS == "linux" {
+	case "linux":
 		height, minHeight = 352, 322
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{

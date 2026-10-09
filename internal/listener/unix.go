@@ -47,7 +47,17 @@ func ListenWithMode(path string, requested transport.Mode) (net.Listener, func()
 		if !errors.Is(dialErr, syscall.ECONNREFUSED) && !errors.Is(dialErr, syscall.ENOENT) {
 			return nil, nil, fmt.Errorf("cannot determine whether socket is stale: %w", dialErr)
 		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := checkSocketOwner(info, path); err != nil {
+			return nil, nil, err
+		}
+		current, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			// Another process already removed the stale socket; bind below.
+		} else if err != nil {
+			return nil, nil, fmt.Errorf("reinspect stale socket: %w", err)
+		} else if !os.SameFile(info, current) {
+			return nil, nil, fmt.Errorf("listen path changed while checking stale socket: %s", path)
+		} else if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, nil, fmt.Errorf("remove stale socket: %w", err)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -60,23 +70,47 @@ func ListenWithMode(path string, requested transport.Mode) (net.Listener, func()
 	}
 	// Cleanup checks ownership before unlinking; net.UnixListener's automatic unlink would bypass that check.
 	ln.(*net.UnixListener).SetUnlinkOnClose(false)
-	if err := os.Chmod(path, 0600); err != nil {
-		_ = ln.Close()
-		_ = os.Remove(path)
-		return nil, nil, fmt.Errorf("set Unix socket permissions: %w", err)
-	}
 	created, err := os.Lstat(path)
 	if err != nil {
 		_ = ln.Close()
-		_ = os.Remove(path)
 		return nil, nil, fmt.Errorf("inspect created Unix socket: %w", err)
 	}
-	cleanup := sync.OnceFunc(func() {
+	if created.Mode()&os.ModeSocket == 0 {
 		_ = ln.Close()
+		return nil, nil, fmt.Errorf("listen path was replaced during socket creation: %s", path)
+	}
+	removeCreatedSocket := func() {
 		current, err := os.Lstat(path)
 		if err == nil && os.SameFile(created, current) {
 			_ = os.Remove(path)
 		}
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		removeCreatedSocket()
+		_ = ln.Close()
+		return nil, nil, fmt.Errorf("set Unix socket permissions: %w", err)
+	}
+	current, err := os.Lstat(path)
+	if err != nil || !os.SameFile(created, current) {
+		removeCreatedSocket()
+		_ = ln.Close()
+		if err != nil {
+			return nil, nil, fmt.Errorf("inspect created Unix socket: %w", err)
+		}
+		return nil, nil, fmt.Errorf("listen path changed while setting socket permissions: %s", path)
+	}
+	cleanup := sync.OnceFunc(func() {
+		removeCreatedSocket()
+		_ = ln.Close()
 	})
 	return ln, cleanup, nil
+}
+
+// checkSocketOwner avoids unlinking a stale endpoint owned by another Unix user.
+func checkSocketOwner(info os.FileInfo, path string) error {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || uint64(stat.Uid) != uint64(os.Geteuid()) {
+		return fmt.Errorf("stale listen socket is not owned by the current user: %s", path)
+	}
+	return nil
 }

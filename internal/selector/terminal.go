@@ -16,6 +16,8 @@ type terminalSession struct {
 	width  int
 	// inputStopped interrupts readiness polling without closing the output side.
 	inputStopped chan struct{}
+	// waitInput waits for platform-specific readiness after a nonblocking read.
+	waitInput func(error) (bool, error)
 	// echoInput prints a completed line when the inherited stream has no live echo.
 	echoInput bool
 	// liveEcho enables the key-by-key picker when the terminal provides raw input.

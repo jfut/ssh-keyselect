@@ -4,10 +4,8 @@
 package selector
 
 import (
-	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -54,16 +52,32 @@ func makeSearchableIdentityOptions(identities []identity.Identity) []identityOpt
 	options := makeIdentityOptions(identities)
 	for index := range options {
 		option := &options[index]
-		searchText := strconv.Itoa(index+1) + " " + option.comment + " " + option.algorithm + " " + option.size + " " + option.fingerprint
-		option.searchRunes = []rune(strings.ToLower(searchText))
+		number := strconv.Itoa(index + 1)
+		capacity := utf8.RuneCountInString(number) + utf8.RuneCountInString(option.comment) +
+			utf8.RuneCountInString(option.algorithm) + utf8.RuneCountInString(option.size) +
+			utf8.RuneCountInString(option.fingerprint) + 4
+		searchRunes := make([]rune, 0, capacity)
+		searchRunes = appendLowerRunes(searchRunes, number)
+		searchRunes = append(searchRunes, ' ')
+		searchRunes = appendLowerRunes(searchRunes, option.comment)
+		searchRunes = append(searchRunes, ' ')
+		searchRunes = appendLowerRunes(searchRunes, option.algorithm)
+		searchRunes = append(searchRunes, ' ')
+		searchRunes = appendLowerRunes(searchRunes, option.size)
+		searchRunes = append(searchRunes, ' ')
+		option.searchRunes = appendLowerRunes(searchRunes, option.fingerprint)
 	}
 	return options
 }
 
 // matchIdentities applies the same case-insensitive fuzzy filter in both picker views.
 func matchIdentities(options []identityOption, query string) []identityMatch {
-	queryRunes := []rune(strings.ToLower(query))
-	matches := make([]identityMatch, 0, len(options))
+	queryRunes := lowerRunes(query)
+	capacity := min(len(options), 32)
+	if len(queryRunes) == 0 {
+		capacity = len(options)
+	}
+	matches := make([]identityMatch, 0, capacity)
 	if len(queryRunes) == 0 {
 		for _, option := range options {
 			matches = append(matches, identityMatch{identityOption: option})
@@ -78,6 +92,18 @@ func matchIdentities(options []identityOption, query string) []identityMatch {
 	}
 	sort.SliceStable(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
 	return matches
+}
+
+func lowerRunes(value string) []rune {
+	runes := make([]rune, 0, utf8.RuneCountInString(value))
+	return appendLowerRunes(runes, value)
+}
+
+func appendLowerRunes(destination []rune, value string) []rune {
+	for _, r := range value {
+		destination = append(destination, unicode.ToLower(r))
+	}
+	return destination
 }
 
 func identityFuzzyScore(queryRunes, candidateRunes []rune) (int, bool) {
@@ -108,7 +134,10 @@ func identityFuzzyScore(queryRunes, candidateRunes []rune) (int, bool) {
 
 // identityColumnWidths fits shared identity row columns to the available width.
 func identityColumnWidths(options []identityOption, terminalWidth int) (no, comment, keyType, size, fingerprint int) {
-	no = len(fmt.Sprintf("%d", max(1, len(options)))) + 1
+	for count := max(1, len(options)); count > 0; count /= 10 {
+		no++
+	}
+	no++
 	comment, keyType, size, fingerprint = len("Comment"), len("Type"), len("Size"), len("Fingerprint")
 	for _, option := range options {
 		comment = max(comment, utf8.RuneCountInString(option.comment))

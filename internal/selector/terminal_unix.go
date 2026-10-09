@@ -7,7 +7,6 @@ package selector
 
 import (
 	"errors"
-	"io"
 	"os"
 	"syscall"
 	"time"
@@ -39,12 +38,16 @@ func openTerminal(path string) (*terminalSession, error) {
 		return nil, err
 	}
 	width, _, _ := term.GetSize(fd)
+	inputStopped := make(chan struct{})
 	return &terminalSession{
 		reader:       file,
 		writer:       file,
 		width:        width,
 		liveEcho:     true,
-		inputStopped: make(chan struct{}),
+		inputStopped: inputStopped,
+		waitInput: func(readErr error) (bool, error) {
+			return waitForTerminalInput(fd, inputStopped, readErr)
+		},
 		// Expire only input polling; the shared descriptor must still accept output.
 		stopInput: func() error { return file.SetReadDeadline(time.Now()) },
 		close: func() error {
@@ -54,15 +57,11 @@ func openTerminal(path string) (*terminalSession, error) {
 }
 
 // waitForTerminalInput handles EAGAIN from nonblocking terminal reads with poll(2).
-func waitForTerminalInput(reader io.Reader, stopped <-chan struct{}, readErr error) (bool, error) {
+func waitForTerminalInput(fd int, stopped <-chan struct{}, readErr error) (bool, error) {
 	if !errors.Is(readErr, syscall.EAGAIN) && !errors.Is(readErr, syscall.EWOULDBLOCK) {
 		return false, nil
 	}
-	file, ok := reader.(*os.File)
-	if !ok {
-		return false, nil
-	}
-	fds := []unix.PollFd{{Fd: int32(file.Fd()), Events: unix.POLLIN}}
+	fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
 	for {
 		select {
 		case <-stopped:

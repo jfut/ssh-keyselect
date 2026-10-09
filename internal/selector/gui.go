@@ -114,7 +114,8 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 	picker := &guiPickerState{
 		ctx: ctx, identities: offered,
 		offered:        offered,
-		requestContext: requestContext, shownAt: shownAt, refresh: refresh,
+		requestContext: requestContext, detailsText: guiSelectionDetailsText(requestContext, shownAt),
+		shownAt: shownAt, refresh: refresh,
 		selected: 0, focusFilter: true,
 		// The current target is the final entry in a multi-host path.
 		detailsScroll: ui.ScrollState{Y: math.MaxFloat32},
@@ -124,9 +125,10 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 	// Windows dimensions are the default; adjust other platforms to show five key
 	// rows.
 	height, minHeight := 386, 360
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		height = 380
-	} else if runtime.GOOS == "linux" {
+	case "linux":
 		height, minHeight = 340, 330
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
@@ -276,6 +278,7 @@ type guiPickerState struct {
 	identities     []identity.Identity
 	offered        []identity.Identity
 	requestContext SelectionContext
+	detailsText    string
 	shownAt        time.Time
 	refresh        func(context.Context) ([]identity.Identity, error)
 	selected       int
@@ -314,7 +317,7 @@ func (p *guiPickerState) view(c *ui.Context) {
 	root.Children(func() {
 		ui.Scroll(c).Height(theme.Space(36)).TrackScroll(&p.detailsScroll).
 			Border(1, theme.Border).Radius(theme.Space(1)).Padding(theme.Space(1.5)).Children(func() {
-			ui.Text(c, guiSelectionDetailsText(p.requestContext, p.shownAt)).FontSize(theme.Rem(0.82)).
+			ui.Text(c, p.detailsText).FontSize(theme.Rem(0.82)).
 				Selectable()
 		})
 		if p.lastQuery != p.query {

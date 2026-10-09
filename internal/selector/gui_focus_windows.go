@@ -45,14 +45,17 @@ func acquirePickerNativeFocus(window *mygo.Window) {
 		attached = result != 0
 	}
 	if attached {
-		defer pickerAttachThreadInput.Call(uintptr(ourThread), uintptr(foregroundThread), 0)
+		defer func() {
+			_, _, _ = pickerAttachThreadInput.Call(uintptr(ourThread), uintptr(foregroundThread), 0)
+		}()
 	}
 
 	// MyGo's Window.Focus calls SetForegroundWindow directly. Temporarily sharing the foreground input queue lets the
 	// signature-request dialog take focus when an SSH terminal owns the foreground, as the earlier UI did on Windows.
-	pickerBringWindowToTop.Call(hwnd)
-	pickerSetForegroundWindow.Call(hwnd)
-	pickerSetFocus.Call(hwnd)
+	// The desktop may still deny activation, so these native focus calls are best-effort.
+	_, _, _ = pickerBringWindowToTop.Call(hwnd)
+	_, _, _ = pickerSetForegroundWindow.Call(hwnd)
+	_, _, _ = pickerSetFocus.Call(hwnd)
 }
 
 // restorePickerReturnWindow returns keyboard focus to the app that requested a key selection.
@@ -74,12 +77,15 @@ func restorePickerReturnWindow(hwnd uintptr, _ uint32) {
 		attached = result != 0
 	}
 	if attached {
-		defer pickerAttachThreadInput.Call(uintptr(ourThread), uintptr(returnThread), 0)
+		defer func() {
+			_, _, _ = pickerAttachThreadInput.Call(uintptr(ourThread), uintptr(returnThread), 0)
+		}()
 	}
 
-	pickerBringWindowToTop.Call(hwnd)
-	pickerSetForegroundWindow.Call(hwnd)
-	pickerSetFocus.Call(hwnd)
+	// Returning focus is also best-effort because foreground changes are controlled by Windows.
+	_, _, _ = pickerBringWindowToTop.Call(hwnd)
+	_, _, _ = pickerSetForegroundWindow.Call(hwnd)
+	_, _, _ = pickerSetFocus.Call(hwnd)
 }
 
 func releasePickerReturnWindow(uintptr) {}

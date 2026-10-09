@@ -13,6 +13,8 @@
 - `internal/config` reads and writes GUI TOML configuration. CLI `ssh`, `list`, and `test` commands resolve upstream defaults from flags and environment without loading that file.
 - `internal/credits` embeds the compact dependency list used by About. Full license texts are shipped in the root `CREDITS` file.
 
+`config.Save` writes a mode-`0600` temporary file in the destination directory before replacing the destination. On Unix, the same-directory rename is atomic; Go does not guarantee atomic replacement on Windows. A failed write leaves the prior configuration intact, and a destination symlink is replaced rather than followed.
+
 ### Agent proxy request flow
 
 OpenSSH may send session bindings before requesting identities and add bindings as forwarding hops are established. The proxy verifies the bindings and scopes the selected identities to the active chain; authentication later uses a separate signing request.
@@ -179,6 +181,8 @@ Each frontend connection accepts at most 16 session-binding requests and retains
 
 Unix listener cleanup unlinks only the socket it created, after checking filesystem identity. Automatic unlinking on listener close is disabled so a replacement at the same path remains untouched.
 
+Before replacing a stale Unix socket, the listener checks that the socket belongs to the effective user and rechecks its filesystem identity after the connection probe. Bind and permission failures also remove the path only when it still names the socket created by that listener.
+
 Unix TUI endpoints use `XDG_RUNTIME_DIR/ssh-keyselect` when configured, or `os.TempDir()/ssh-keyselect-<effective UID>` otherwise. The XDG directory and the private directory must belong to the effective UID. The private directory is opened without following a symlink; ownership is checked before permissions are set to `0700` through the directory descriptor. This separates users in a shared temporary directory and avoids changing another user's directory permissions.
 
 ### Windows endpoint implementation
@@ -188,6 +192,8 @@ Unix TUI endpoints use `XDG_RUNTIME_DIR/ssh-keyselect` when configured, or `os.T
 The `cygwin` transport reads the socket file's endpoint information and connects through loopback TCP using the file's GUID handshake. The `wsl1` transport uses Windows AF_UNIX sockets with paths translated from `/mnt/<drive>/...`. The `named-pipe` mode uses Windows OpenSSH named pipes. Native Windows and shell-specific defaults are implemented in platform-suffixed files under `internal/listener`, `internal/upstream`, `internal/winpath`, and `cmd/ssh-keyselect-gui`.
 
 Cygwin socket metadata reads are capped at 256 bytes. The listener accepts each connection immediately; its handshake then runs in the proxy's per-connection handler, after admission and before normal client logging or agent request handling. Connection reads and writes enforce authentication before passing agent traffic.
+
+The Cygwin listener removes its metadata file on setup failure or shutdown only while the path still identifies the file it created.
 
 Unauthenticated connections count against the proxy's 128-client limit, but their rejection does not generate client or overload logs. The transport also caps pending handshakes at 128 and closes excess connections. Each pending handshake expires 10 seconds after admission, even if connection I/O has not started. Authentication stops that timer without imposing a deadline on later signing approval waits. Dial cancellation interrupts the handshake, and listener shutdown closes every pending handshake immediately.
 

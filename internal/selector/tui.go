@@ -77,15 +77,19 @@ type tuiByteReader interface {
 
 // tuiSingleByteReader avoids bufio read-ahead across the prompt/SSH handoff.
 type tuiSingleByteReader struct {
-	reader  io.Reader
-	stopped <-chan struct{}
+	reader    io.Reader
+	waitInput func(error) (bool, error)
 }
 
 func (r tuiSingleByteReader) ReadByte() (byte, error) {
 	for {
 		var value [1]byte
 		if _, err := io.ReadFull(r.reader, value[:]); err != nil {
-			retry, waitErr := waitForTerminalInput(r.reader, r.stopped, err)
+			var retry bool
+			var waitErr error
+			if r.waitInput != nil {
+				retry, waitErr = r.waitInput(err)
+			}
 			if waitErr != nil {
 				return 0, waitErr
 			}
@@ -106,7 +110,7 @@ type tuiTerminalKey struct {
 func tuiReadTerminalByte(ctx context.Context, terminal *terminalSession) (byte, error) {
 	result := make(chan tuiTerminalKey, 1)
 	go func() {
-		value, err := (tuiSingleByteReader{reader: terminal.reader, stopped: terminal.inputStopped}).ReadByte()
+		value, err := (tuiSingleByteReader{reader: terminal.reader, waitInput: terminal.waitInput}).ReadByte()
 		result <- tuiTerminalKey{value: value, err: err}
 	}()
 	select {
@@ -234,7 +238,7 @@ func (s *TUISelector) selectLive(ctx context.Context, terminal *terminalSession,
 func tuiReadEscapeKey(ctx context.Context, terminal *terminalSession) (byte, bool, error) {
 	result := make(chan tuiTerminalKey, 1)
 	go func() {
-		value, err := (tuiSingleByteReader{reader: terminal.reader, stopped: terminal.inputStopped}).ReadByte()
+		value, err := (tuiSingleByteReader{reader: terminal.reader, waitInput: terminal.waitInput}).ReadByte()
 		result <- tuiTerminalKey{value: value, err: err}
 	}()
 	timer := time.NewTimer(40 * time.Millisecond)
@@ -280,7 +284,7 @@ func (s *TUISelector) selectLineBuffered(ctx context.Context, terminal *terminal
 		}
 		lineCh := make(chan tuiInputLine, 1)
 		go func() {
-			line, skipNextLF, err := tuiReadInputLine(tuiSingleByteReader{reader: terminal.reader, stopped: terminal.inputStopped}, skipLF)
+			line, skipNextLF, err := tuiReadInputLine(tuiSingleByteReader{reader: terminal.reader, waitInput: terminal.waitInput}, skipLF)
 			lineCh <- tuiInputLine{line: line, skipLF: skipNextLF, err: err}
 		}()
 		select {
@@ -373,7 +377,7 @@ func tuiReadInputLine(reader tuiByteReader, skipLF bool) (string, bool, error) {
 
 func tuiRenderSelectionFrame(options []identityOption, matches []identityMatch, query string, selected, terminalWidth int, requestContext SelectionContext, shownAt time.Time) string {
 	noWidth, commentWidth, typeWidth, sizeWidth, fingerprintWidth := identityColumnWidths(options, terminalWidth)
-	queryRunes := []rune(strings.ToLower(query))
+	queryRunes := lowerRunes(query)
 	var frame strings.Builder
 	fmt.Fprintf(&frame, "\r\n[%s - %s]\r\n\r\n", identitySelectionBrand, selectionDisplayTime(shownAt))
 	tuiWriteSelectionMetadata(&frame, requestContext, terminalWidth)
@@ -434,7 +438,7 @@ func tuiRenderSelectionFrame(options []identityOption, matches []identityMatch, 
 		fmt.Fprintf(&frame, "\x1b[90m%s\x1b[0m", identitySelectionFilterHint)
 		fmt.Fprintf(&frame, "\x1b[%dD", utf8.RuneCountInString(identitySelectionFilterHint))
 	} else {
-		frame.WriteString(query)
+		frame.WriteString(identity.DisplayText(query))
 	}
 	return frame.String()
 }

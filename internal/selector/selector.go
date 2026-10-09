@@ -54,26 +54,6 @@ func selectionDisplayTime(shownAt time.Time) string {
 	return shownAt.Format("2006-01-02 15:04:05 MST")
 }
 
-// selectionRemainingSeconds rounds up so the display never shows zero before the deadline.
-func selectionRemainingSeconds(ctx context.Context) (int, bool) {
-	if ctx == nil {
-		return 0, false
-	}
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		return 0, false
-	}
-	remaining := time.Until(deadline)
-	if remaining <= 0 {
-		return 0, true
-	}
-	seconds := int(remaining / time.Second)
-	if remaining%time.Second != 0 {
-		seconds++
-	}
-	return seconds, true
-}
-
 // selectionDetails keeps the verified host path consistent between terminal and GUI pickers.
 func selectionDetails(requestContext SelectionContext) []selectionDetail {
 	if len(requestContext.HostBindings) == 0 {

@@ -321,10 +321,23 @@ func guiChooseConfigToSave(parent *mygo.Window, currentPath string) (string, err
 	return path, nil
 }
 
+// guiSettingsValues captures the controls so Apply can recognize an untouched dialog.
+type guiSettingsValues struct {
+	upstreamPath     string
+	listenPath       string
+	logFile          string
+	upstreamMode     string
+	listenMode       string
+	logLevel         string
+	theme            string
+	selectionTimeout float64
+}
+
 type guiSettingsState struct {
 	app                *guiApp
 	window             *mygo.Window
 	cfg                config.Config
+	initialValues      guiSettingsValues
 	upstreamPath       string
 	listenPath         string
 	logFile            string
@@ -400,7 +413,7 @@ func newGUISettingsState(app *guiApp, cfg config.Config) (*guiSettingsState, err
 	}
 	listenMode := guiDisplayModeName(initialListenMode)
 	upstreamMode := guiDisplayModeName(cfg.Agent.UpstreamMode)
-	return &guiSettingsState{
+	state := &guiSettingsState{
 		app: app, cfg: cfg,
 		upstreamPath: guiDisplayEndpointPath(cfg.Agent.Upstream),
 		listenPath:   guiDisplayEndpointPath(listenEndpoint),
@@ -415,7 +428,17 @@ func newGUISettingsState(app *guiApp, cfg config.Config) (*guiSettingsState, err
 			}
 			return listenEndpoint
 		}(),
-	}, nil
+	}
+	state.initialValues = state.values()
+	return state, nil
+}
+
+func (s *guiSettingsState) values() guiSettingsValues {
+	return guiSettingsValues{
+		upstreamPath: s.upstreamPath, listenPath: s.listenPath, logFile: s.logFile,
+		upstreamMode: s.upstreamMode, listenMode: s.listenMode, logLevel: s.logLevel,
+		theme: s.theme, selectionTimeout: s.selectionTimeout,
+	}
 }
 
 func (s *guiSettingsState) view(c *ui.Context) {
@@ -699,6 +722,11 @@ func (s *guiSettingsState) apply() {
 		return
 	}
 	s.err = ""
+	// Derived defaults can make buildConfig differ even when the dialog is untouched.
+	if s.values() == s.initialValues || cfg == s.cfg {
+		guiCloseWindowAfterFrame(s.window)
+		return
+	}
 	s.applying = true
 	s.app.applyConfig(cfg, true, func(err error) {
 		s.applying = false

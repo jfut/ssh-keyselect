@@ -282,9 +282,9 @@ func (a *guiApp) applicationMenuItem(c *ui.Context, theme *ui.Theme, label, shor
 	}
 	item.Children(func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(theme.Space(2)).Children(func() {
-			ui.Text(c, label).SingleLine().TextColor(labelColor).Grow(1)
+			ui.Text(c, label).SingleLine().FontSize(theme.Rem(0.9)).TextColor(labelColor).Grow(1)
 			if shortcut != "" {
-				ui.Text(c, shortcut).SingleLine().TextColor(shortcutColor)
+				ui.Text(c, shortcut).SingleLine().FontSize(theme.Rem(0.9)).TextColor(shortcutColor)
 			}
 		})
 	})

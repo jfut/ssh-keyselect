@@ -209,56 +209,104 @@ func (a *guiApp) view(c *ui.Context) {
 	}
 }
 
-// applicationMenuBar draws a readable menu strip on platforms with native menus
-// whose text size cannot be controlled by the MyGo public API.
+// applicationMenuBar draws themed in-window menus on platforms without an app menu bar.
 func (a *guiApp) applicationMenuBar(c *ui.Context, theme *ui.Theme) {
-	ui.Row(c).Gap(theme.Space(1)).AlignItems(ui.Center).
+	barColor := theme.Surface
+	if theme.Dark {
+		barColor = ui.Hex("#181818")
+	}
+	ui.Row(c).FillWidth().Gap(theme.Space(1)).AlignItems(ui.Center).
 		Margin(-theme.Space(3), -theme.Space(3), 0, -theme.Space(3)).
-		Padding(0, 0, theme.Space(1), 0).Background(ui.Hex("#ffffff")).
-		BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Children(func() {
-		file := ui.Text(c, "File").FontSize(theme.Rem(0.9)).Padding(theme.Space(1), theme.Space(2)).Cursor(ui.CursorPointer)
-		if file.Hovered() {
-			file.Background(theme.SurfaceHover).Radius(theme.Space(1))
+		Padding(0, 0, theme.Space(1), 0).Background(barColor).
+		BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Role(ui.RoleMenuBar).Label("Application menu").Children(func() {
+		file := guiMenuBarButton(c, theme, "File", a.fileMenuOpen)
+		if file.Clicked() {
+			a.fileMenuOpen = !a.fileMenuOpen
+			a.helpMenuOpen = false
 		}
-		file.Menu(func(menu *ui.Menu) {
-			if menu.Item("Open Configuration…").Shortcut(ui.Cmd, ui.KeyO).Disabled(a.applying).Chosen() {
-				a.openConfiguration()
-			}
-			if menu.Item("Save Configuration").Shortcut(ui.Cmd, ui.KeyS).Disabled(a.applying).Chosen() {
-				a.saveConfigurationFromMenu()
-			}
-			if menu.Item("Save Configuration As…").Shortcut(ui.Cmd|ui.Shift, ui.KeyS).Disabled(a.applying).Chosen() {
-				a.saveAsConfiguration()
-			}
-			menu.Separator()
-			if menu.Item("Settings…").Shortcut(ui.Cmd, ui.KeyComma).Disabled(a.applying).Chosen() {
-				a.openSettings()
-			}
-			menu.Separator()
-			if menu.Item("Quit").Shortcut(ui.Cmd, ui.KeyQ).Chosen() {
-				mygo.App.Quit()
-			}
+		ui.PopoverBase(c, file, &a.fileMenuOpen, func(panel ui.Element) {
+			panel.Margin(theme.Space(1), 0, 0, 0).Width(theme.Space(96)).Padding(theme.Space(1)).
+				Radius(theme.Space(1)).Background(theme.Surface).Border(1, theme.Border).
+				Shadow(0, 6, 18, 0, ui.RGBA(0, 0, 0, 0.45)).Role(ui.RoleMenu).Label("File")
+			ui.Column(c).Gap(theme.Space(0.5)).Children(func() {
+				a.applicationMenuItem(c, theme, "Open Configuration…", "Ctrl+O", a.applying, a.openConfiguration)
+				a.applicationMenuItem(c, theme, "Save Configuration", "Ctrl+S", a.applying, a.saveConfigurationFromMenu)
+				a.applicationMenuItem(c, theme, "Save Configuration As…", "Ctrl+Shift+S", a.applying, a.saveAsConfiguration)
+				guiApplicationMenuSeparator(c, theme)
+				a.applicationMenuItem(c, theme, "Settings…", "Ctrl+,", a.applying, a.openSettings)
+				guiApplicationMenuSeparator(c, theme)
+				a.applicationMenuItem(c, theme, "Quit", "Ctrl+Q", false, mygo.App.Quit)
+			})
 		})
-		help := ui.Text(c, "Help").FontSize(theme.Rem(0.9)).Padding(theme.Space(1), theme.Space(2)).Cursor(ui.CursorPointer)
-		if help.Hovered() {
-			help.Background(theme.SurfaceHover).Radius(theme.Space(1))
+		help := guiMenuBarButton(c, theme, "Help", a.helpMenuOpen)
+		if help.Clicked() {
+			a.helpMenuOpen = !a.helpMenuOpen
+			a.fileMenuOpen = false
 		}
-		help.Menu(func(menu *ui.Menu) {
-			if menu.Item("About").Chosen() {
-				a.showAbout()
-			}
+		ui.PopoverBase(c, help, &a.helpMenuOpen, func(panel ui.Element) {
+			panel.Margin(theme.Space(1), 0, 0, 0).Width(theme.Space(48)).Padding(theme.Space(1)).
+				Radius(theme.Space(1)).Background(theme.Surface).Border(1, theme.Border).
+				Shadow(0, 6, 18, 0, ui.RGBA(0, 0, 0, 0.45)).Role(ui.RoleMenu).Label("Help")
+			ui.Column(c).Children(func() {
+				a.applicationMenuItem(c, theme, "About", "", false, a.showAbout)
+			})
 		})
 	})
 }
 
+func guiMenuBarButton(c *ui.Context, theme *ui.Theme, label string, open bool) ui.Element {
+	button := ui.ButtonBase(c).Padding(theme.Space(1), theme.Space(2)).Radius(theme.Space(1)).
+		Role(ui.RoleMenuButton).Label(label)
+	if button.Hovered() || open {
+		button.Background(theme.SurfaceHover)
+	}
+	button.Children(func() { ui.Text(c, label).FontSize(theme.Rem(0.9)) })
+	return button
+}
+
+func (a *guiApp) applicationMenuItem(c *ui.Context, theme *ui.Theme, label, shortcut string, disabled bool, action func()) {
+	item := ui.ButtonBase(c).FillWidth().Padding(theme.Space(1), theme.Space(2)).Radius(theme.Space(0.75)).
+		Role(ui.RoleMenuItem).Label(label).Disabled(disabled)
+	labelColor, shortcutColor := theme.Text, theme.TextMuted
+	if disabled {
+		labelColor = theme.TextMuted
+	} else if item.Hovered() {
+		hoverColor := theme.SurfaceHover
+		if theme.Dark {
+			hoverColor = ui.Hex("#094771")
+		}
+		item.Background(hoverColor)
+		if theme.Dark {
+			labelColor, shortcutColor = ui.Hex("#ffffff"), ui.Hex("#ffffff")
+		}
+	}
+	item.Children(func() {
+		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(theme.Space(2)).Children(func() {
+			ui.Text(c, label).SingleLine().TextColor(labelColor).Grow(1)
+			if shortcut != "" {
+				ui.Text(c, shortcut).SingleLine().TextColor(shortcutColor)
+			}
+		})
+	})
+	if item.Clicked() && !disabled {
+		a.fileMenuOpen, a.helpMenuOpen = false, false
+		action()
+	}
+}
+
+func guiApplicationMenuSeparator(c *ui.Context, theme *ui.Theme) {
+	ui.Box(c).FillWidth().Height(1).Margin(theme.Space(1), 0).Background(theme.Border)
+}
+
 func (a *guiApp) identityCard(c *ui.Context, theme *ui.Theme) {
 	card := guiCard(c)
+	keyBadgeFill, keyBadgeText := guitable.AccentBadgeColors(theme)
 	// Keep selected row highlights inside the rounded key card on every OS.
 	card.Clip()
 	card.Grow(1).MinHeight(theme.Space(50)).Children(func() {
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Keys").TextColor(ui.Hex("#1870de")).
-				Background(ui.Hex("#e8f2ff")).Padding(theme.Space(1), theme.Space(2)).Radius(theme.Space(1.5))
+			ui.Text(c, "Keys").TextColor(keyBadgeText).
+				Background(keyBadgeFill).Padding(theme.Space(1), theme.Space(2)).Radius(theme.Space(1.5))
 			switch {
 			case a.loading:
 				ui.Text(c, "Loading…").TextColor(theme.TextMuted).Grow(1)
@@ -297,10 +345,14 @@ func (a *guiApp) identityCard(c *ui.Context, theme *ui.Theme) {
 
 func (a *guiApp) connectionCard(c *ui.Context, theme *ui.Theme) {
 	card := guiCard(c)
+	proxyBadgeFill, proxyBadgeText := guitable.SuccessBadgeColors(theme)
+	autoBadgeFill, autoBadgeText := guitable.AccentBadgeColors(theme)
+	offFill, offText := guitable.SuccessBadgeColors(theme)
+	onFill, onText := guitable.DangerBadgeColors(theme)
 	card.Shrink(0).Children(func() {
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Agent Proxy").TextColor(ui.Hex("#16804a")).
-				Background(ui.Hex("#e6f8ee")).Padding(theme.Space(1), theme.Space(2)).Radius(theme.Space(1.5))
+			ui.Text(c, "Agent Proxy").TextColor(proxyBadgeText).
+				Background(proxyBadgeFill).Padding(theme.Space(1), theme.Space(2)).Radius(theme.Space(1.5))
 			settings := guiIconButton(c, guiSettingsIcon, "Settings", true, theme)
 			settings.Size(theme.Space(8), theme.Space(8))
 			if settings.Clicked() && !a.applying {
@@ -318,13 +370,13 @@ func (a *guiApp) connectionCard(c *ui.Context, theme *ui.Theme) {
 				})
 			}
 			autoSelect := a.server.AutoSelect()
-			ui.Text(c, "Auto Select").TextColor(ui.Hex("#1870de")).
-				Background(ui.Hex("#e8f2ff")).Padding(theme.Space(1), theme.Space(2)).Radius(theme.Space(1.5)).
+			ui.Text(c, "Auto Select").TextColor(autoBadgeText).
+				Background(autoBadgeFill).Padding(theme.Space(1), theme.Space(2)).Radius(theme.Space(1.5)).
 				Margin(0, 0, 0, ui.Auto).
 				Tooltip("When On, every upstream key is available without a per-connection selection.")
 			off := ui.Button(c, "Off").Tooltip("Select one key for each connection.")
 			if !autoSelect {
-				off.Background(ui.Hex("#e6f8ee")).TextColor(ui.Hex("#16804a")).Border(1, ui.Hex("#e6f8ee"))
+				off.Background(offFill).TextColor(offText).Border(1, offFill)
 			}
 			if off.Clicked() && autoSelect {
 				a.autoSelect = false
@@ -333,7 +385,7 @@ func (a *guiApp) connectionCard(c *ui.Context, theme *ui.Theme) {
 			}
 			on := ui.Button(c, "On").Tooltip("Allow clients to use every upstream identity.")
 			if autoSelect {
-				on.Background(ui.Hex("#b62b2b")).TextColor(ui.Hex("#ffffff")).Border(1, ui.Hex("#b62b2b"))
+				on.Background(onFill).TextColor(onText).Border(1, onFill)
 			}
 			if on.Clicked() && !autoSelect {
 				a.confirmAutoSelect = true
@@ -350,12 +402,12 @@ func (a *guiApp) endpointRow(c *ui.Context, theme *ui.Theme, title, variable str
 	endpoint := ""
 	mode := transport.Auto
 	var modeErr error
-	marker := ui.Hex("#1870de")
-	modeFill, modeInk := ui.Hex("#e8f2ff"), ui.Hex("#1870de")
+	marker := theme.Accent
+	modeFill, modeInk := guitable.AccentBadgeColors(theme)
 	if listen {
 		endpoint, mode = a.actualListen, a.listenMode
-		marker = ui.Hex("#16804a")
-		modeFill, modeInk = ui.Hex("#e6f8ee"), ui.Hex("#16804a")
+		marker = theme.Success
+		modeFill, modeInk = guitable.SuccessBadgeColors(theme)
 		if endpoint == "" {
 			modeErr = fmt.Errorf("listen endpoint is not available")
 		}
@@ -369,9 +421,9 @@ func (a *guiApp) endpointRow(c *ui.Context, theme *ui.Theme, title, variable str
 	displayPath := guiDisplayEndpointPath(endpoint)
 	if endpoint == "" {
 		displayPath = "Not configured"
-		modeFill, modeInk = ui.Hex("#fff6e0"), ui.Hex("#b56b00")
+		modeFill, modeInk = guitable.WarningBadgeColors(theme)
 	} else if modeErr != nil {
-		modeFill, modeInk = ui.Hex("#fff6e0"), ui.Hex("#b56b00")
+		modeFill, modeInk = guitable.WarningBadgeColors(theme)
 	}
 	controlHeight := theme.Space(8)
 	ui.Row(c).Gap(theme.Space(1.5)).AlignItems(ui.Center).Children(func() {
@@ -382,14 +434,15 @@ func (a *guiApp) endpointRow(c *ui.Context, theme *ui.Theme, title, variable str
 				ui.Row(c).Gap(theme.Space(1)).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, variable).FontSize(theme.Rem(0.82)).TextColor(theme.TextMuted).SingleLine()
 					if listen {
-						ui.Text(c, "Proxy").FontSize(theme.Rem(0.72)).TextColor(ui.Hex("#16804a")).
-							Background(ui.Hex("#e6f8ee")).Padding(theme.Space(0.5), theme.Space(1)).Radius(theme.Space(1))
+						proxyFill, proxyText := guitable.SuccessBadgeColors(theme)
+						ui.Text(c, "Proxy").FontSize(theme.Rem(0.72)).TextColor(proxyText).
+							Background(proxyFill).Padding(theme.Space(0.5), theme.Space(1)).Radius(theme.Space(1))
 					}
 				})
 			})
 		})
 		path := ui.Text(c, displayPath).SingleLine().Selectable().Tooltip(displayPath).
-			Padding(theme.Space(1), theme.Space(2)).Background(ui.Hex("#f7f9fc")).
+			Padding(theme.Space(1), theme.Space(2)).Background(theme.SurfaceHover).
 			Border(1, theme.Border).Radius(theme.Space(1)).Grow(1).MinWidth(theme.Space(35)).Height(controlHeight)
 		if endpoint == "" {
 			path.TextColor(theme.TextMuted)
@@ -599,7 +652,7 @@ func (a *guiApp) showAbout() {
 	}
 	content := ui.View(func(c *ui.Context) {
 		theme := guitable.CompactTheme(c)
-		root := ui.Column(c).Fill().Padding(guiDialogEdgePadding(theme)).Gap(theme.Space(2)).Background(ui.Hex("#f5f8fc"))
+		root := ui.Column(c).Fill().Padding(guiDialogEdgePadding(theme)).Gap(theme.Space(2)).Background(theme.Background)
 		if c.Shortcut(0, ui.KeyEscape) && a.aboutWindow != nil {
 			guiCloseWindowAfterFrame(a.aboutWindow)
 			return
@@ -627,7 +680,7 @@ func (a *guiApp) showAbout() {
 				ui.Text(c, "Third-party libraries and licenses").FontSize(theme.Rem(0.82)).
 					Margin(theme.Space(1), 0, 0, 0)
 				ui.Scroll(c).Grow(1).MinHeight(theme.Space(48)).Border(1, theme.Border).
-					Radius(theme.Space(1)).Padding(theme.Space(1.5)).Background(ui.Hex("#ffffff")).Children(func() {
+					Radius(theme.Space(1)).Padding(theme.Space(1.5)).Background(theme.Surface).Children(func() {
 					ui.Text(c, strings.TrimSpace(credits.DependencyList)).FontSize(theme.Rem(0.9)).Selectable()
 				})
 				ui.Text(c, "Full license texts are included in CREDITS.").FontSize(theme.Rem(0.82))

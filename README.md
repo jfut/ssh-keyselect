@@ -316,6 +316,9 @@ selection_timeout = 120 # seconds (1 to 86399)
 [log]
 file = ""
 level = "off"
+
+[gui]
+theme = "light" # "light" or "dark"
 ```
 
 ### Cross-shell setup
@@ -330,8 +333,8 @@ ssh user@example.org
 
 ### GUI controls
 
-- Open Settings from the Settings button or File > Settings. In Key selection, set how many seconds a key request can wait for a choice (default 120); the picker shows a live countdown. If it reaches zero, the expired dialog stays open until dismissed, and its key choice is no longer available. In Logging, set the log level and optional log file. Leaving the file empty writes logs to standard error.
-- Apply activates endpoint and logging changes immediately. Use File > Save to store them.
+- Open Settings from the Settings button or File > Settings. In Theme, choose Light or Dark; the Dark theme uses charcoal surfaces and blue accents. In Key selection, set how many seconds a key request can wait for a choice (default 120); the picker shows a live countdown. If it reaches zero, the expired dialog stays open until dismissed, and its key choice is no longer available. In Logging, set the log level and optional log file. Leaving the file empty writes logs to standard error.
+- Apply activates theme, endpoint, and logging changes. Use File > Save to store them in the TOML configuration.
 - The File menu opens, saves, and saves as TOML configuration files. The GUI prompts before closing with unsaved changes.
 - On macOS, minimizing the main window hides it from the Dock while keeping the menu bar icon available. Click the icon to show the window again.
 - About shows the application version and third-party library license inventory. Full license notices are included in `CREDITS`.

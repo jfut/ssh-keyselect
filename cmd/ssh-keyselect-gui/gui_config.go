@@ -60,6 +60,7 @@ func (a *guiApp) applyConfig(cfg config.Config, dirty bool, complete func(error)
 				cfg.Agent.Listen = config.ExpandPath(cfg.Agent.Listen)
 				cfg.Log.File = config.ExpandPath(cfg.Log.File)
 				a.cfg = cfg
+				mygo.Theme.SetSource(mygo.ThemeSource(cfg.GUI.Theme))
 				a.actualListen = actualListen
 				a.listenMode = effectiveMode
 				a.dirty = dirty
@@ -330,6 +331,7 @@ type guiSettingsState struct {
 	upstreamMode       string
 	listenMode         string
 	logLevel           string
+	theme              string
 	selectionTimeout   float64
 	initialListenMode  transport.Mode
 	previousListenMode string
@@ -352,13 +354,13 @@ func (a *guiApp) openSettings() {
 		return
 	}
 	// Keep the centered settings footer's vertical margins consistent across platforms.
-	height, minHeight := 460, 460
+	height, minHeight := 530, 530
 	switch runtime.GOOS {
 	case "darwin":
 		// Leave rounded-edge clearance without adding excess space around the actions.
-		height, minHeight = 420, 420
+		height, minHeight = 490, 490
 	case "linux":
-		height, minHeight = 400, 400
+		height, minHeight = 470, 470
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: "Settings", Parent: a.window, Modal: true,
@@ -404,6 +406,7 @@ func newGUISettingsState(app *guiApp, cfg config.Config) (*guiSettingsState, err
 		listenPath:   guiDisplayEndpointPath(listenEndpoint),
 		logFile:      guiDisplayFilePath(cfg.Log.File),
 		upstreamMode: upstreamMode, listenMode: listenMode, logLevel: strings.ToLower(cfg.Log.Level),
+		theme:             guiThemeLabel(cfg.GUI.Theme),
 		selectionTimeout:  float64(cfg.Agent.SelectionTimeout),
 		initialListenMode: initialListenMode, previousListenMode: listenMode,
 		lastFilesystemPath: func() string {
@@ -427,11 +430,12 @@ func (s *guiSettingsState) view(c *ui.Context) {
 		topPadding = edgePadding
 	}
 	ui.Column(c).Fill().Padding(topPadding, edgePadding, theme.Space(1.5), edgePadding).
-		Gap(theme.Space(1.5)).Background(ui.Hex("#f5f8fc")).Children(func() {
+		Gap(theme.Space(1.5)).Background(theme.Background).Children(func() {
 		s.endpointSection(c, theme, "Upstream", true)
 		s.endpointSection(c, theme, "Listen", false)
 		s.selectionSection(c, theme)
 		s.loggingSection(c, theme)
+		s.themeSection(c, theme)
 		if s.err != "" {
 			ui.Text(c, s.err).TextColor(theme.Danger)
 		}
@@ -451,11 +455,24 @@ func (s *guiSettingsState) view(c *ui.Context) {
 	})
 }
 
+// themeSection lets the user choose the GUI theme saved in config.toml.
+func (s *guiSettingsState) themeSection(c *ui.Context, theme *ui.Theme) {
+	section := ui.Column(c).Shrink(0).Gap(theme.Space(1)).
+		Padding(theme.Space(1.5), theme.Space(2)).
+		Border(1, theme.Border).Radius(theme.Space(2)).Background(theme.Surface)
+	section.Children(func() {
+		ui.Text(c, "Theme").FontWeight(500)
+		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
+			ui.Select(c, &s.theme, []string{"Light", "Dark"}).Label("Theme").Grow(1)
+		})
+	})
+}
+
 // selectionSection controls the deadline for a pending interactive key choice.
 func (s *guiSettingsState) selectionSection(c *ui.Context, theme *ui.Theme) {
 	section := ui.Column(c).Shrink(0).Gap(theme.Space(1)).
 		Padding(theme.Space(1.5), theme.Space(2)).
-		Border(1, ui.Hex("#dce4ee")).Radius(theme.Space(2)).Background(ui.Hex("#ffffff"))
+		Border(1, theme.Border).Radius(theme.Space(2)).Background(theme.Surface)
 	section.Children(func() {
 		ui.Text(c, "Key selection").FontWeight(500)
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
@@ -476,7 +493,7 @@ func (s *guiSettingsState) endpointSection(c *ui.Context, theme *ui.Theme, title
 	}
 	section := ui.Column(c).Shrink(0).Gap(theme.Space(1)).
 		Padding(theme.Space(1.5), theme.Space(2)).
-		Border(1, ui.Hex("#dce4ee")).Radius(theme.Space(2)).Background(ui.Hex("#ffffff"))
+		Border(1, theme.Border).Radius(theme.Space(2)).Background(theme.Surface)
 	section.Children(func() {
 		ui.Text(c, title).FontWeight(500)
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
@@ -507,7 +524,7 @@ func (s *guiSettingsState) endpointSection(c *ui.Context, theme *ui.Theme, title
 func (s *guiSettingsState) loggingSection(c *ui.Context, theme *ui.Theme) {
 	section := ui.Column(c).Shrink(0).Gap(theme.Space(1)).
 		Padding(theme.Space(1.5), theme.Space(2)).
-		Border(1, ui.Hex("#dce4ee")).Radius(theme.Space(2)).Background(ui.Hex("#ffffff"))
+		Border(1, theme.Border).Radius(theme.Space(2)).Background(theme.Surface)
 	section.Children(func() {
 		ui.Text(c, "Logging").FontWeight(500)
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
@@ -631,6 +648,7 @@ func (s *guiSettingsState) buildConfig() (config.Config, error) {
 	cfg.Agent.SelectionTimeout = int(s.selectionTimeout)
 	cfg.Log.File = config.ExpandPath(guiFilePathFromDisplay(s.logFile))
 	cfg.Log.Level = s.logLevel
+	cfg.GUI.Theme = guiThemeValue(s.theme)
 	if err := cfg.Validate(); err != nil {
 		return config.Config{}, err
 	}

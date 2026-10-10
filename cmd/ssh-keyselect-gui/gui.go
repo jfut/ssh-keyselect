@@ -71,6 +71,8 @@ type guiApp struct {
 	confirmAutoSelect bool
 	closePrompt       bool
 	closeConfirmed    bool
+	fileMenuOpen      bool
+	helpMenuOpen      bool
 	aboutWindow       *mygo.Window
 	uiStarted         bool
 
@@ -218,6 +220,7 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	if err := setGUIUserDataPath(); err != nil {
 		return cmdutil.ReportError(stderr, guiCommandName, err)
 	}
+	mygo.Theme.SetSource(mygo.ThemeSource(cfg.GUI.Theme))
 	// Keep the native application menu on macOS; other platforms use the
 	// in-window menu bar so its text follows the app's normal UI size.
 	if runtime.GOOS == "darwin" {

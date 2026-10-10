@@ -343,6 +343,13 @@ func (a *guiApp) identityCard(c *ui.Context, theme *ui.Theme) {
 	})
 }
 
+// guiAutoSelectModeButton matches the Auto Select badge height and retains the standard horizontal padding.
+func guiAutoSelectModeButton(c *ui.Context, theme *ui.Theme, label string) ui.Element {
+	// Button borders contribute one DIP on each side of the badge's vertical padding.
+	verticalPadding := theme.Space(1) - 1
+	return ui.Button(c, label).Padding(verticalPadding, theme.Space(3.5))
+}
+
 func (a *guiApp) connectionCard(c *ui.Context, theme *ui.Theme) {
 	card := guiCard(c)
 	proxyBadgeFill, proxyBadgeText := guitable.SuccessBadgeColors(theme)
@@ -374,7 +381,8 @@ func (a *guiApp) connectionCard(c *ui.Context, theme *ui.Theme) {
 				Background(autoBadgeFill).Padding(theme.Space(1), theme.Space(2)).Radius(theme.Space(1.5)).
 				Margin(0, 0, 0, ui.Auto).
 				Tooltip("When On, every upstream key is available without a per-connection selection.")
-			off := ui.Button(c, "Off").Tooltip("Select one key for each connection.")
+			off := guiAutoSelectModeButton(c, theme, "Off").
+				Tooltip("Select one key for each connection.")
 			if !autoSelect {
 				off.Background(offFill).TextColor(offText).Border(1, offFill)
 			}
@@ -383,7 +391,8 @@ func (a *guiApp) connectionCard(c *ui.Context, theme *ui.Theme) {
 				a.server.SetAutoSelect(false)
 				a.updateTrayAutoSelect()
 			}
-			on := ui.Button(c, "On").Tooltip("Allow clients to use every upstream identity.")
+			on := guiAutoSelectModeButton(c, theme, "On").
+				Tooltip("Allow clients to use every upstream identity.")
 			if autoSelect {
 				on.Background(onFill).TextColor(onText).Border(1, onFill)
 			}

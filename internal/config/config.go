@@ -21,9 +21,17 @@ const (
 	maxSelectionTimeoutSeconds     = 86399
 )
 
+const (
+	// GUIThemeLight is the default GUI theme.
+	GUIThemeLight = "light"
+	// GUIThemeDark selects the dark GUI theme.
+	GUIThemeDark = "dark"
+)
+
 type Config struct {
 	Agent AgentConfig `toml:"agent"`
 	Log   LogConfig   `toml:"log"`
+	GUI   GUIConfig   `toml:"gui"`
 }
 
 type AgentConfig struct {
@@ -39,9 +47,15 @@ type LogConfig struct {
 	Level string `toml:"level"`
 }
 
+// GUIConfig holds settings that affect only the native GUI presentation.
+type GUIConfig struct {
+	Theme string `toml:"theme"`
+}
+
 type saveConfig struct {
 	Agent saveAgentConfig `toml:"agent"`
 	Log   LogConfig       `toml:"log"`
+	GUI   GUIConfig       `toml:"gui"`
 }
 
 type saveAgentConfig struct {
@@ -86,6 +100,7 @@ func configForSave(cfg Config) saveConfig {
 			SelectionTimeout: cfg.Agent.SelectionTimeout,
 		},
 		Log: cfg.Log,
+		GUI: cfg.GUI,
 	}
 }
 
@@ -97,6 +112,7 @@ func Default() Config {
 			SelectionTimeout: defaultSelectionTimeoutSeconds,
 		},
 		Log: LogConfig{Level: "off"},
+		GUI: GUIConfig{Theme: GUIThemeLight},
 	}
 }
 
@@ -242,6 +258,11 @@ func (c Config) Validate() error {
 	case "off", "debug", "info", "warn", "error":
 	default:
 		return fmt.Errorf("log.level must be off, debug, info, warn, or error")
+	}
+	switch c.GUI.Theme {
+	case GUIThemeLight, GUIThemeDark:
+	default:
+		return fmt.Errorf("gui.theme must be light or dark")
 	}
 	return nil
 }

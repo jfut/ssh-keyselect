@@ -305,6 +305,8 @@ type guiPickerState struct {
 
 func (p *guiPickerState) view(c *ui.Context) {
 	theme := guitable.CompactTheme(c)
+	keyBadgeFill, keyBadgeText := guitable.AccentBadgeColors(theme)
+	timeoutBadgeFill, timeoutBadgeText := guitable.AccentBadgeColors(theme)
 	outerPadding := theme.Space(2)
 	if runtime.GOOS == "darwin" {
 		// Keep picker controls clear of the rounded corners of macOS sheets.
@@ -364,8 +366,8 @@ func (p *guiPickerState) view(c *ui.Context) {
 		})
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
 			// Match the main window's Keys badge beside the picker count.
-			ui.Text(c, "Keys").FontSize(theme.Rem(0.9)).TextColor(ui.Hex("#1870de")).
-				Background(ui.Hex("#e8f2ff")).Padding(theme.Space(0.5), theme.Space(1.5)).Radius(theme.Space(1.5))
+			ui.Text(c, "Keys").FontSize(theme.Rem(0.9)).TextColor(keyBadgeText).
+				Background(keyBadgeFill).Padding(theme.Space(0.5), theme.Space(1.5)).Radius(theme.Space(1.5))
 			ui.Text(c, fmt.Sprintf("%d/%d", len(matches), len(p.identities))).FontSize(theme.Rem(0.9)).TextColor(theme.TextMuted)
 			if p.err != "" {
 				ui.Text(c, p.err).SingleLine().TextColor(theme.Danger).Grow(1)
@@ -376,8 +378,8 @@ func (p *guiPickerState) view(c *ui.Context) {
 				// Keep the timeout label and its value together so the digits cannot be clipped.
 				timeout := ui.Row(c).Gap(theme.Space(0.5)).AlignItems(ui.Center).Shrink(0)
 				timeout.Children(func() {
-					ui.Text(c, "Timeout").SingleLine().Shrink(0).FontSize(theme.Rem(0.9)).TextColor(ui.Hex("#1870de")).
-						Background(ui.Hex("#e8f2ff")).Padding(theme.Space(0.5), theme.Space(1.5)).Radius(theme.Space(1.5))
+					ui.Text(c, "Timeout").SingleLine().Shrink(0).FontSize(theme.Rem(0.9)).TextColor(timeoutBadgeText).
+						Background(timeoutBadgeFill).Padding(theme.Space(0.5), theme.Space(1.5)).Radius(theme.Space(1.5))
 					ui.Text(c, fmt.Sprintf("%ds", seconds)).NoWrap().Width(theme.Space(14)).TextAlign(ui.End).Shrink(0).
 						FontSize(theme.Rem(0.9)).TextColor(theme.TextMuted).Padding(0, theme.Space(1.5))
 				})

@@ -215,13 +215,15 @@ At GUI startup, an existing filesystem entry at the resolved Listen path leaves 
 
 #### Rendering
 
-The GUI uses MyGo's Go-only `ui` package. Views rebuild from application state, and virtualized tables create visible rows on demand. The main identity table reuses sorted rows between state changes. The picker reuses searchable identities and matches between query changes. Native windows do not start a WebView or load HTML or JavaScript.
+The GUI uses MyGo's Go-only `ui` package. Views rebuild from application state, and virtualized tables create visible rows on demand. The main identity table reuses sorted rows between state changes. The picker reuses searchable identities and matches between query changes. Native windows do not start a WebView or load HTML or JavaScript. `mygo.Theme.SetSource` applies `gui.theme` before the event loop starts and after Settings applies a new value. The first launch defaults to Light. `internal/guitable.CompactTheme` preserves the selected theme and supplies matching compact palettes for the main window, Settings, About, and the SSH key picker. The theme is part of the active TOML configuration and is saved with File > Save.
 
-MyGo draws the UI with Metal on macOS, Direct3D 11 on Windows, and OpenGL on Linux. Native file dialogs, menus, clipboard access, and tray integration use MyGo's platform APIs. Linux needs GTK 3 at runtime; tray integration additionally needs `libayatana-appindicator3`.
+Windows and Linux draw the File and Help menus as themed MyGo UI popovers so their bars and dropdowns follow the app palette; MyGo's system menus retain the operating system's theme. macOS uses the native application menu.
+
+MyGo draws the UI with Metal on macOS, Direct3D 11 on Windows, and OpenGL on Linux. Native file dialogs, clipboard access, and tray integration use MyGo's platform APIs. Linux needs GTK 3 at runtime; tray integration additionally needs `libayatana-appindicator3`.
 
 #### Settings layout
 
-Settings sections use compact, content-sized layouts, and the Cancel/Apply footer centers its buttons in the remaining window height. `openSettings` sets a fixed `Height` and `MinHeight` for each platform, so adding or removing rows changes the vertical space around those buttons. When changing Settings items, update both window dimensions to account for the rendered content change and preserve the existing clearance above and below the footer. Keep the section gaps and padding consistent, and compare Windows, macOS, and Linux layouts because native title bars and macOS rounded edges change the available content area.
+Settings sections use compact, content-sized layouts, and the Cancel/Apply footer centers its buttons in the remaining window height. `openSettings` sets a fixed `Height` and `MinHeight` for each platform (530 on Windows, 490 on macOS, and 470 on Linux), so adding or removing rows changes the vertical space around those buttons. When changing Settings items, update both window dimensions to account for the rendered content change and preserve the existing clearance above and below the footer. Keep the section gaps and padding consistent, and compare Windows, macOS, and Linux layouts because native title bars and macOS rounded edges change the available content area.
 
 Before the MyGo event loop starts, `PathUserData` is set to the `ssh-keyselect` directory under the platform user configuration directory and that directory is created:
 

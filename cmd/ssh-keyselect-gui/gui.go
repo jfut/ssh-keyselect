@@ -80,13 +80,14 @@ type guiApp struct {
 }
 
 type guiOptions struct {
-	Config       *string          `help:"TOML configuration file." placeholder:"FILE"`
-	Listen       *string          `help:"Frontend endpoint (default: HOME socket, or the fixed Windows OpenSSH named-pipe endpoint)." placeholder:"ENDPOINT"`
-	ListenMode   *string          `help:"Frontend protocol mode (auto, cygwin, unix, named-pipe, wsl1)." placeholder:"MODE"`
-	Upstream     *string          `help:"Upstream endpoint (default: UPSTREAM_SSH_AUTH_SOCK, then SSH_AUTH_SOCK)." placeholder:"ENDPOINT"`
-	UpstreamMode *string          `help:"Upstream protocol mode (auto, cygwin, unix, named-pipe, wsl1)." placeholder:"MODE"`
-	LogLevel     *string          `help:"Log level (off, debug, info, warn, error)." placeholder:"LEVEL"`
-	Version      kong.VersionFlag `help:"Print version information and quit."`
+	Config                           *string          `help:"TOML configuration file." placeholder:"FILE"`
+	Listen                           *string          `help:"Frontend endpoint (default: HOME socket, or the fixed Windows OpenSSH named-pipe endpoint)." placeholder:"ENDPOINT"`
+	ListenMode                       *string          `help:"Frontend protocol mode (auto, cygwin, unix, named-pipe, wsl1)." placeholder:"MODE"`
+	Upstream                         *string          `help:"Upstream endpoint (default: UPSTREAM_SSH_AUTH_SOCK, then SSH_AUTH_SOCK)." placeholder:"ENDPOINT"`
+	UpstreamMode                     *string          `help:"Upstream protocol mode (auto, cygwin, unix, named-pipe, wsl1)." placeholder:"MODE"`
+	AllowUnboundSigningOnBindFailure *bool            `help:"Allow signing without upstream session binding after an explicit upstream refusal (weakens upstream restrictions)."`
+	LogLevel                         *string          `help:"Log level (off, debug, info, warn, error)." placeholder:"LEVEL"`
+	Version                          kong.VersionFlag `help:"Print version information and quit."`
 }
 
 // executeGUI parses options, starts the native UI event loop, and owns the proxy lifecycle.
@@ -146,6 +147,9 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	if options.LogLevel != nil {
 		cfg.Log.Level = *options.LogLevel
 	}
+	if options.AllowUnboundSigningOnBindFailure != nil {
+		cfg.Agent.AllowUnboundSigningOnBindFailure = *options.AllowUnboundSigningOnBindFailure
+	}
 	if err := cfg.Validate(); err != nil {
 		return cmdutil.ReportError(stderr, guiCommandName, err)
 	}
@@ -184,6 +188,7 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 		return endpoint.List(refreshCtx)
 	})
 	server := &agentproxy.Server{Agent: endpointAgent, Selector: guiSelector, Logger: logger}
+	server.SetAllowUnboundSigningOnBindFailure(cfg.Agent.AllowUnboundSigningOnBindFailure)
 	app := &guiApp{
 		ctx: ctx, stop: stop, logger: logger, loggerOutput: logOutput, cfg: cfg,
 		configPath: configPath, actualListen: listenPath, listenMode: effectiveListenMode,

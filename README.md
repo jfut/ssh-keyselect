@@ -223,7 +223,7 @@ Long comments in CLI tables are shortened with an ellipsis for display. The orig
 
 The wrapper options go before `--`; arguments after it are passed to OpenSSH.
 
-- `ssh-keyselect ssh`: `--upstream`, `--upstream-mode`, `--listen`, `--listen-mode`, `--selection-timeout`, `--log-level`, `--log-file`
+- `ssh-keyselect ssh`: `--upstream`, `--upstream-mode`, `--listen`, `--listen-mode`, `--selection-timeout`, `--allow-unbound-signing-on-bind-failure`, `--log-level`, `--log-file`
 - `ssh-keyselect list` and `ssh-keyselect test`: `--upstream`, `--upstream-mode`
 
 The terminal commands `ssh`, `list`, and `test` do not read TOML configuration files.
@@ -267,7 +267,7 @@ On Windows and Linux, run `ssh-keyselect-gui` to start the GUI and pass command 
 
 |       Command       |                                         Options                                         |
 | ------------------- | --------------------------------------------------------------------------------------- |
-| `ssh-keyselect-gui` | `--config`, `--listen`, `--listen-mode`, `--upstream`, `--upstream-mode`, `--log-level` |
+| `ssh-keyselect-gui` | `--config`, `--listen`, `--listen-mode`, `--upstream`, `--upstream-mode`, `--allow-unbound-signing-on-bind-failure`, `--log-level` |
 
 ### Configuration
 
@@ -312,6 +312,8 @@ listen = 'C:\Users\alice\.ssh\ssh-keyselect-agent.sock'
 upstream_mode = "auto"
 listen_mode = "cygwin"
 selection_timeout = 120 # seconds (1 to 86399)
+# Allows signing without upstream destination binding after an explicit refusal.
+allow_unbound_signing_on_bind_failure = false
 
 [log]
 file = ""
@@ -333,7 +335,7 @@ ssh user@example.org
 
 ### GUI controls
 
-- Open Settings from the Settings button or File > Settings. In Theme, choose Light or Dark; the Dark theme uses charcoal surfaces and blue accents. In Key selection, set how many seconds a key request can wait for a choice (default 120); the picker shows a live countdown. If it reaches zero, the expired dialog stays open until dismissed, and its key choice is no longer available. In Logging, set the log level and optional log file. Leaving the file empty writes logs to standard error.
+- Open Settings from the Settings button or File > Settings. In Theme, choose Light or Dark; the Dark theme uses charcoal surfaces and blue accents. In Key selection, set how many seconds a key request can wait for a choice (default 120); the picker shows a live countdown. If it reaches zero, the expired dialog stays open until dismissed, and its key choice is no longer available. In Upstream, `Allow signing after upstream rejects session binding (required for 1Password)` retries signing without the upstream session binding. This may bypass restrictions enforced by the upstream agent and is off by default. In Logging, set the log level and optional log file. Leaving the file empty writes logs to standard error.
 - Apply activates theme, endpoint, and logging changes. Use File > Save to store them in the TOML configuration.
 - The File menu opens, saves, and saves as TOML configuration files. The GUI prompts before closing with unsaved changes.
 - On macOS, minimizing the main window hides it from the Dock while keeping the menu bar icon available. Click the icon to show the window again.
@@ -393,6 +395,7 @@ The agent protocol does not provide a hostname. Names matched from the default l
 ### Security and limitations
 
 - The proxy supports listing identities, signing with selected identities, and verified OpenSSH session bindings. Key-management and unknown agent requests are always rejected.
+- If an upstream agent explicitly refuses a verified session binding, KeySelect normally keeps signing blocked for that connection. The opt-in `agent.allow_unbound_signing_on_bind_failure` setting (or the `--allow-unbound-signing-on-bind-failure` option) lets KeySelect list identities and sign without sending the binding upstream. KeySelect still verifies the host context locally for the picker, but this can bypass destination restrictions enforced by the upstream agent. Leave it off unless the upstream agent cannot support session bindings and you accept that tradeoff.
 - The proxy never stores private keys or signs data. It forwards signing requests for permitted identities to the upstream agent.
 - KeySelect can only filter identities provided by the upstream agent. Identity-listing and signing requests omit the destination host, user, and port. A session binding can provide a signed host key, but not a hostname, user, or port, so KeySelect cannot select keys by destination.
 - On macOS and Linux, Unix socket files use mode `0600`, and a created parent directory uses mode `0700`.

@@ -145,6 +145,9 @@ func (a *guiApp) view(c *ui.Context) {
 	content := ui.Column(c).Fill().Padding(theme.Space(3)).Gap(theme.Space(2))
 	if runtime.GOOS != "darwin" {
 		// App-level commands stay available regardless of which area has focus.
+		if c.Shortcut(ui.Cmd, ui.KeyN) {
+			a.newConfiguration()
+		}
 		if c.Shortcut(ui.Cmd, ui.KeyO) {
 			a.openConfiguration()
 		}
@@ -197,13 +200,21 @@ func (a *guiApp) view(c *ui.Context) {
 			a.closeConfirmed = true
 			guiCloseWindowAfterFrame(a.window)
 		case 2:
-			if err := a.saveCurrentConfig(); err != nil {
-				a.statusMessage = "Could not save configuration: " + err.Error()
-				a.closePrompt = true
-			} else {
+			a.saveCurrentConfigWithCompletion(func(saved bool, err error) {
+				if err != nil {
+					a.statusMessage = "Could not save configuration: " + err.Error()
+					a.closePrompt = true
+					if a.window != nil {
+						a.window.Invalidate()
+					}
+					return
+				}
+				if !saved {
+					return
+				}
 				a.closeConfirmed = true
 				guiCloseWindowAfterFrame(a.window)
-			}
+			})
 		}
 	}
 }
@@ -211,6 +222,7 @@ func (a *guiApp) view(c *ui.Context) {
 // applicationMenuBar draws themed in-window menus on platforms without an app menu bar.
 func (a *guiApp) applicationMenuBar(c *ui.Context, theme *ui.Theme) {
 	barColor := theme.Surface
+	fileMenuWidth, helpMenuWidth := theme.Space(64), theme.Space(48)
 	if theme.Dark {
 		barColor = ui.Hex("#181818")
 	}
@@ -224,13 +236,14 @@ func (a *guiApp) applicationMenuBar(c *ui.Context, theme *ui.Theme) {
 			a.helpMenuOpen = false
 		}
 		ui.PopoverBase(c, file, &a.fileMenuOpen, func(panel ui.Element) {
-			panel.Margin(theme.Space(1), 0, 0, 0).Width(theme.Space(96)).Padding(theme.Space(1)).
+			panel.Margin(theme.Space(1), 0, 0, 0).Width(fileMenuWidth).Padding(theme.Space(1)).
 				Radius(theme.Space(1)).Background(theme.Surface).Border(1, theme.Border).
 				Shadow(0, 6, 18, 0, ui.RGBA(0, 0, 0, 0.45)).Role(ui.RoleMenu).Label("File")
 			ui.Column(c).Gap(theme.Space(0.5)).Children(func() {
-				a.applicationMenuItem(c, theme, "Open Configuration…", "Ctrl+O", a.applying, a.openConfiguration)
-				a.applicationMenuItem(c, theme, "Save Configuration", "Ctrl+S", a.applying, a.saveConfigurationFromMenu)
-				a.applicationMenuItem(c, theme, "Save Configuration As…", "Ctrl+Shift+S", a.applying, a.saveAsConfiguration)
+				a.applicationMenuItem(c, theme, "New", "Ctrl+N", a.applying, a.newConfiguration)
+				a.applicationMenuItem(c, theme, "Open", "Ctrl+O", a.applying, a.openConfiguration)
+				a.applicationMenuItem(c, theme, "Save", "Ctrl+S", a.applying, a.saveConfigurationFromMenu)
+				a.applicationMenuItem(c, theme, "Save As", "Ctrl+Shift+S", a.applying, a.saveAsConfiguration)
 				guiApplicationMenuSeparator(c, theme)
 				a.applicationMenuItem(c, theme, "Settings…", "Ctrl+,", a.applying, a.openSettings)
 				guiApplicationMenuSeparator(c, theme)
@@ -243,7 +256,7 @@ func (a *guiApp) applicationMenuBar(c *ui.Context, theme *ui.Theme) {
 			a.fileMenuOpen = false
 		}
 		ui.PopoverBase(c, help, &a.helpMenuOpen, func(panel ui.Element) {
-			panel.Margin(theme.Space(1), 0, 0, 0).Width(theme.Space(48)).Padding(theme.Space(1)).
+			panel.Margin(theme.Space(1), 0, 0, 0).Width(helpMenuWidth).Padding(theme.Space(1)).
 				Radius(theme.Space(1)).Background(theme.Surface).Border(1, theme.Border).
 				Shadow(0, 6, 18, 0, ui.RGBA(0, 0, 0, 0.45)).Role(ui.RoleMenu).Label("Help")
 			ui.Column(c).Children(func() {

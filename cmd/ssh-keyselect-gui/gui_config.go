@@ -92,6 +92,116 @@ func (a *guiApp) saveCurrentConfig() error {
 	return nil
 }
 
+// saveCurrentConfigWithCompletion saves an untitled configuration through Save As.
+func (a *guiApp) saveCurrentConfigWithCompletion(complete func(bool, error)) {
+	if a.configPath == "" {
+		a.saveAsConfigurationWithCompletion(complete)
+		return
+	}
+	err := a.saveCurrentConfig()
+	if complete != nil {
+		complete(err == nil, err)
+	}
+}
+
+// newConfiguration protects unsaved edits before opening a fresh untitled configuration.
+func (a *guiApp) newConfiguration() {
+	if a.applying {
+		return
+	}
+	a.showMainWindow()
+	parent, currentPath, dirty := a.window, a.configPath, a.dirty
+	if !dirty {
+		a.applyNewConfiguration()
+		return
+	}
+	go func() {
+		detail := ""
+		if currentPath != "" {
+			detail = guiDisplayEndpointPath(currentPath)
+		}
+		result, err := mygo.Dialog.Message(mygo.MessageOptions{
+			Parent: parent, Type: mygo.MessageQuestion, Title: branding.Name,
+			Message: "Save changes before creating a new configuration?",
+			Detail:  detail,
+			Buttons: []string{"Cancel", "Discard", "Save"}, CancelButton: 0, DefaultButton: 2,
+		})
+		if err != nil || result.Button == 0 || parent == nil || parent.IsDestroyed() {
+			return
+		}
+		if result.Button == 2 {
+			parent.Update(func() {
+				a.saveCurrentConfigWithCompletion(func(saved bool, saveErr error) {
+					if saveErr != nil {
+						a.statusMessage = "Could not save configuration: " + saveErr.Error()
+						parent.Invalidate()
+						return
+					}
+					if saved {
+						a.applyNewConfiguration()
+					}
+				})
+			})
+			return
+		}
+		parent.Update(func() { a.applyNewConfiguration() })
+	}()
+}
+
+// applyNewConfiguration resets settings and opens Settings after runtime apply succeeds.
+func (a *guiApp) applyNewConfiguration() {
+	if a.applying {
+		return
+	}
+	cfg, err := guiDefaultNewConfiguration()
+	if err != nil {
+		a.statusMessage = "Could not create default upstream endpoint: " + err.Error()
+		if a.window != nil {
+			a.window.Invalidate()
+		}
+		return
+	}
+	a.applyConfig(cfg, false, func(err error) {
+		if err != nil {
+			return
+		}
+		a.configPath = ""
+		a.confirmAutoSelect = false
+		a.autoSelect = false
+		a.server.SetAutoSelect(false)
+		a.updateTrayAutoSelect()
+		a.openSettings()
+	})
+}
+
+// guiDefaultNewConfiguration starts fresh while retaining environment endpoints.
+func guiDefaultNewConfiguration() (config.Config, error) {
+	cfg := config.Default()
+	cfg.Agent.Upstream = config.UpstreamFromEnvironment()
+	var err error
+	cfg, err = guiDefaultUpstreamIfUnset(cfg)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if listen := os.Getenv("SSH_KEYSELECT_LISTEN"); listen != "" {
+		cfg.Agent.Listen = config.ExpandPath(listen)
+	}
+	return cfg, nil
+}
+
+// guiDefaultUpstreamIfUnset provides a platform agent endpoint only when no upstream is configured.
+func guiDefaultUpstreamIfUnset(cfg config.Config) (config.Config, error) {
+	if cfg.Agent.Upstream == "" {
+		endpoint, err := guiFallbackUpstreamEndpoint(cfg.Agent.UpstreamMode)
+		if err != nil {
+			return config.Config{}, fmt.Errorf("locate default upstream endpoint: %w", err)
+		}
+		cfg.Agent.Upstream = endpoint
+	}
+	cfg.Agent.Upstream = config.ExpandPath(cfg.Agent.Upstream)
+	return cfg, nil
+}
+
 func (a *guiApp) openConfiguration() {
 	if a.applying {
 		return
@@ -119,10 +229,22 @@ func (a *guiApp) openConfiguration() {
 				return
 			}
 			if result.Button == 2 {
-				if err := config.Save(currentPath, guiConfigForDisk(currentCfg)); err != nil {
+				savePath := currentPath
+				if savePath == "" {
+					savePath, err = guiChooseConfigToSave(parent, "")
+					if err != nil {
+						mygo.Dialog.Error("Could not save configuration.", err.Error())
+						return
+					}
+					if savePath == "" {
+						return
+					}
+				}
+				if err := config.Save(savePath, guiConfigForDisk(currentCfg)); err != nil {
 					mygo.Dialog.Error("Could not save configuration.", err.Error())
 					return
 				}
+				currentPath = savePath
 				saved = true
 			}
 		}
@@ -131,6 +253,7 @@ func (a *guiApp) openConfiguration() {
 			mygo.Dialog.Error("Could not open configuration.", err.Error())
 			if saved && parent != nil {
 				parent.Update(func() {
+					a.configPath = currentPath
 					a.dirty = false
 					a.updateWindowTitle()
 				})
@@ -142,6 +265,7 @@ func (a *guiApp) openConfiguration() {
 		}
 		parent.Update(func() {
 			if saved {
+				a.configPath = currentPath
 				a.dirty = false
 			}
 			a.applyConfig(cfg, false, func(applyErr error) {
@@ -156,6 +280,11 @@ func (a *guiApp) openConfiguration() {
 }
 
 func (a *guiApp) saveAsConfiguration() {
+	a.saveAsConfigurationWithCompletion(nil)
+}
+
+// saveAsConfigurationWithCompletion reports whether the native save dialog wrote a file.
+func (a *guiApp) saveAsConfigurationWithCompletion(complete func(bool, error)) {
 	if a.applying {
 		return
 	}
@@ -163,29 +292,39 @@ func (a *guiApp) saveAsConfiguration() {
 	parent, currentPath, cfg := a.window, a.configPath, a.cfg
 	go func() {
 		path, err := guiChooseConfigToSave(parent, currentPath)
-		if err != nil || path == "" {
-			if err != nil {
-				mygo.Dialog.Error("Could not save configuration.", err.Error())
-			}
-			return
+		if err == nil && path != "" {
+			err = config.Save(path, guiConfigForDisk(cfg))
 		}
-		if err := config.Save(path, guiConfigForDisk(cfg)); err != nil {
+		if err != nil {
 			mygo.Dialog.Error("Could not save configuration.", err.Error())
+		}
+		if parent == nil || parent.IsDestroyed() {
 			return
 		}
-		if parent != nil && !parent.IsDestroyed() {
-			parent.Update(func() {
+		parent.Update(func() {
+			if err == nil && path != "" {
 				a.configPath = path
 				a.dirty = false
 				a.statusMessage = ""
 				a.updateWindowTitle()
-			})
-		}
+				if complete != nil {
+					complete(true, nil)
+				}
+				return
+			}
+			if complete != nil {
+				complete(false, err)
+			}
+		})
 	}()
 }
 
 func (a *guiApp) saveConfigurationFromMenu() {
 	if a.applying {
+		return
+	}
+	if a.configPath == "" {
+		a.saveAsConfiguration()
 		return
 	}
 	if err := a.saveCurrentConfig(); err != nil {
@@ -214,9 +353,10 @@ func (a *guiApp) applicationMenu() *mygo.Menu {
 		}
 	}
 	fileItems := []*mygo.MenuItem{
-		{ID: "config.open", Label: "Open Configuration…", Accelerator: "CmdOrCtrl+O", Click: func(*mygo.MenuItem, *mygo.Window) { a.openConfiguration() }},
-		{ID: "config.save", Label: "Save Configuration", Accelerator: "CmdOrCtrl+S", Click: func(*mygo.MenuItem, *mygo.Window) { a.saveConfigurationFromMenu() }},
-		{ID: "config.save-as", Label: "Save Configuration As…", Accelerator: "CmdOrCtrl+Shift+S", Click: func(*mygo.MenuItem, *mygo.Window) { a.saveAsConfiguration() }},
+		{ID: "config.new", Label: "New", Accelerator: "CmdOrCtrl+N", Click: func(*mygo.MenuItem, *mygo.Window) { a.newConfiguration() }},
+		{ID: "config.open", Label: "Open", Accelerator: "CmdOrCtrl+O", Click: func(*mygo.MenuItem, *mygo.Window) { a.openConfiguration() }},
+		{ID: "config.save", Label: "Save", Accelerator: "CmdOrCtrl+S", Click: func(*mygo.MenuItem, *mygo.Window) { a.saveConfigurationFromMenu() }},
+		{ID: "config.save-as", Label: "Save As", Accelerator: "CmdOrCtrl+Shift+S", Click: func(*mygo.MenuItem, *mygo.Window) { a.saveAsConfiguration() }},
 		mygo.Separator(),
 		{ID: "settings.open", Label: "Settings…", Accelerator: "CmdOrCtrl+,", Click: func(*mygo.MenuItem, *mygo.Window) { a.openSettings() }},
 		mygo.Separator(),
@@ -276,7 +416,7 @@ func (a *guiApp) updateConfigurationMenu() {
 		return
 	}
 	enabled := !a.applying
-	for _, id := range []string{"config.open", "config.save", "config.save-as", "settings.open"} {
+	for _, id := range []string{"config.new", "config.open", "config.save", "config.save-as", "settings.open"} {
 		if item := menu.ItemByID(id); item != nil {
 			item.SetEnabled(enabled)
 		}
@@ -301,9 +441,13 @@ func guiChooseConfigToOpen(parent *mygo.Window, currentPath string) (string, err
 
 // guiChooseConfigToSave uses the native save dialog and keeps TOML file names explicit.
 func guiChooseConfigToSave(parent *mygo.Window, currentPath string) (string, error) {
-	defaultPath := ""
-	if currentPath != "" {
-		defaultPath = currentPath
+	defaultPath := currentPath
+	if defaultPath == "" {
+		var err error
+		defaultPath, err = guiDefaultConfigDirectory()
+		if err != nil {
+			return "", err
+		}
 	}
 	path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
 		Parent: parent, Title: "Save Configuration", DefaultPath: defaultPath,
@@ -319,6 +463,28 @@ func guiChooseConfigToSave(parent *mygo.Window, currentPath string) (string, err
 		return "", fmt.Errorf("configuration file must use the .toml extension")
 	}
 	return path, nil
+}
+
+// guiDefaultConfigDirectory chooses the standard per-user folder for a new config file.
+func guiDefaultConfigDirectory() (string, error) {
+	var directory string
+	if runtime.GOOS == "windows" {
+		base, err := os.UserConfigDir()
+		if err != nil {
+			return "", fmt.Errorf("locate user config directory: %w", err)
+		}
+		directory = filepath.Join(base, "ssh-keyselect")
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("locate user home directory: %w", err)
+		}
+		directory = filepath.Join(home, ".config", "ssh-keyselect")
+	}
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return "", fmt.Errorf("create default config directory: %w", err)
+	}
+	return directory, nil
 }
 
 // guiSettingsValues captures the controls so Apply can recognize an untouched dialog.
@@ -541,7 +707,7 @@ func (s *guiSettingsState) endpointSection(c *ui.Context, theme *ui.Theme, title
 			ui.Text(c, "Mode").Width(theme.Space(26)).Shrink(0)
 			if ui.Select(c, mode, guiTransportModeOptions(upstream)).Label("Mode").Grow(1).Changed() {
 				if upstream {
-					s.err = ""
+					s.changeUpstreamMode()
 				} else {
 					s.changeListenMode()
 				}
@@ -629,6 +795,17 @@ func (s *guiSettingsState) changeListenMode() {
 		}
 	}
 	s.previousListenMode = s.listenMode
+	s.err = ""
+}
+
+// changeUpstreamMode updates the default agent path to match the selected transport.
+func (s *guiSettingsState) changeUpstreamMode() {
+	endpoint, err := guiDefaultUpstreamEndpoint(guiModeFromDisplay(s.upstreamMode))
+	if err != nil {
+		s.err = "Could not create an upstream endpoint: " + err.Error()
+		return
+	}
+	s.upstreamPath = guiDisplayEndpointPath(endpoint)
 	s.err = ""
 }
 

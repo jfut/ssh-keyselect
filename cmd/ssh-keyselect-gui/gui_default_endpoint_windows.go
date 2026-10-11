@@ -17,6 +17,33 @@ import (
 )
 
 const defaultGUIListenPipe = `\\.\pipe\ssh-keyselect-agent.socket`
+const defaultGUIUpstreamPipe = `\\.\pipe\openssh-ssh-agent`
+
+// guiFallbackUpstreamEndpoint uses Windows OpenSSH for the automatic default mode.
+func guiFallbackUpstreamEndpoint(mode transport.Mode) (string, error) {
+	if mode == transport.Auto {
+		mode = transport.NamedPipe
+	}
+	return guiDefaultUpstreamEndpoint(mode)
+}
+
+// guiDefaultUpstreamEndpoint chooses an endpoint path for the selected transport mode.
+func guiDefaultUpstreamEndpoint(mode transport.Mode) (string, error) {
+	if mode == transport.NamedPipe {
+		return defaultGUIUpstreamPipe, nil
+	}
+	home := os.Getenv("HOME")
+	var err error
+	if mode == transport.WSL1 || filepath.VolumeName(home) == "" {
+		home, err = os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("locate user home directory: %w", err)
+		}
+	}
+	path := filepath.Join(home, ".ssh", "ssh-agent.sock")
+	endpoint, _, err := guiPathForWindowsTransport(path, mode, os.Getenv("HOME"))
+	return endpoint, err
+}
 
 // guiDefaultListenEndpoint uses a home-directory socket for filesystem transports and a fixed named pipe for OpenSSH.
 func guiDefaultListenEndpoint(upstream string, requested transport.Mode) (string, transport.Mode, error) {

@@ -211,6 +211,8 @@ A Listen mode change closes and reopens the listener. If rebinding fails, it att
 
 Configuration application runs on a worker that serializes listener shutdown and restart. After successful application, it updates configuration and MyGo UI state on the UI thread. Configuration actions are disabled while application is pending.
 
+At GUI startup and for New, an unset upstream resolves from `UPSTREAM_SSH_AUTH_SOCK` then `SSH_AUTH_SOCK`; when neither is set, Windows uses the OpenSSH named pipe and macOS/Linux use `~/.ssh/ssh-agent.sock`. Changing Upstream Mode replaces its path with the endpoint default for that mode. New applies `config.Default` with these endpoint defaults, clears `guiApp.configPath`, and opens Settings after application succeeds. An empty config path marks an untitled configuration, so Save opens Save As. Save prompts before New, Open, and close use Save As when the current configuration is untitled.
+
 The event loop stays available to finish cancelled picker tasks while server handlers drain. MyGo's `OnWillQuit` handler stops the selector, cancels the application context, and waits for server shutdown and owned socket cleanup before returning. Closing the native picker releases its waiting agent request so shutdown can finish while the UI loop is active.
 
 At GUI startup, an existing filesystem entry at the resolved Listen path leaves the proxy unconfigured. The preflight check prevents the listener from removing or replacing an existing socket file.

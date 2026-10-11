@@ -150,6 +150,10 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	if options.AllowUnboundSigningOnBindFailure != nil {
 		cfg.Agent.AllowUnboundSigningOnBindFailure = *options.AllowUnboundSigningOnBindFailure
 	}
+	cfg, err = guiDefaultUpstreamIfUnset(cfg)
+	if err != nil {
+		return cmdutil.ReportError(stderr, guiCommandName, err)
+	}
 	if err := cfg.Validate(); err != nil {
 		return cmdutil.ReportError(stderr, guiCommandName, err)
 	}

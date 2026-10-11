@@ -50,6 +50,19 @@ func Fingerprint(blob []byte) string {
 // Digest returns the binary authorization key for this identity.
 func Digest(blob []byte) [sha256.Size]byte { return sha256.Sum256(blob) }
 
+// AuthorizedKeyText formats the public key and display-safe comment for OpenSSH authorized_keys.
+func AuthorizedKeyText(id Identity) (string, error) {
+	key, err := ssh.ParsePublicKey(id.Blob)
+	if err != nil {
+		return "", err
+	}
+	line := strings.TrimSuffix(string(ssh.MarshalAuthorizedKey(key)), "\n")
+	if comment := DisplayText(id.Comment); comment != "" {
+		line += " " + comment
+	}
+	return line, nil
+}
+
 // bitSize returns the effective public-key size in bits when the algorithm defines one.
 func bitSize(blob []byte, algorithm string) (int, bool) {
 	switch algorithm {

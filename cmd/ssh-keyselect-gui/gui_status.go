@@ -328,10 +328,20 @@ func (a *guiApp) identityCard(c *ui.Context, theme *ui.Theme) {
 		table := guitable.IdentityTable(c, &a.identityTable, rows, true, true).
 			Grow(1).MinHeight(theme.Space(50))
 		table.ContextMenu(func(menu *ui.Menu) {
-			copyItem := menu.Item("Copy").Disabled(a.selectedIdentity < 0 || a.selectedIdentity >= len(rows)).
+			hasSelection := a.selectedIdentity >= 0 && a.selectedIdentity < len(rows)
+			copyItem := menu.Item("Copy").Disabled(!hasSelection).
 				Shortcut(ui.Cmd, ui.KeyC)
-			if copyItem.Chosen() && a.selectedIdentity >= 0 && a.selectedIdentity < len(rows) {
+			if copyItem.Chosen() && hasSelection {
 				mygo.Clipboard.WriteText(guitable.IdentityCopyText(rows[a.selectedIdentity].Identity))
+			}
+			copyPublicKey := menu.Item("Copy as public key").Disabled(!hasSelection)
+			if copyPublicKey.Chosen() && hasSelection {
+				publicKey, err := identity.AuthorizedKeyText(rows[a.selectedIdentity].Identity)
+				if err != nil {
+					a.statusMessage = "Could not format public key: " + err.Error()
+				} else {
+					mygo.Clipboard.WriteText(publicKey)
+				}
 			}
 		})
 		if table.Shortcut(ui.Cmd, ui.KeyC) && a.selectedIdentity >= 0 && a.selectedIdentity < len(rows) {

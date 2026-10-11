@@ -43,6 +43,11 @@ func guiWindowsPathForDisplay(path string) string {
 	return strings.ReplaceAll(path, `\`, "¥")
 }
 
+// guiFormatPathInput shows typed Windows separators with the same yen glyph as selected paths.
+func guiFormatPathInput(path string) string {
+	return strings.ReplaceAll(path, `\`, "¥")
+}
+
 // guiDisplayFilePath uses the same yen-style backslash rendering as socket path fields.
 func guiDisplayFilePath(path string) string {
 	if path == "" {

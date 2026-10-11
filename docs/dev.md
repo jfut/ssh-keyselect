@@ -205,7 +205,7 @@ Unauthenticated connections count against the proxy's 128-client limit, but thei
 
 The CLI and GUI use the same endpoint comparison before binding. On Windows, native paths, Git Bash drive mounts, Cygwin `/cygdrive/` paths, and WSL1 drive mounts resolve through `internal/winpath`; named-pipe names and native paths compare without case sensitivity.
 
-The GUI stores and displays paths in platform-specific formats. On Windows, dialog paths are converted to or from the selected transport when opening or saving configuration.
+The GUI stores and displays paths in platform-specific formats. On Windows, dialog paths are converted to or from the selected transport when opening or saving configuration. Socket and log path text fields display typed backslashes as yen signs, then convert them back before applying configuration.
 
 A Listen mode change closes and reopens the listener. If rebinding fails, it attempts to restore the previous listener.
 
@@ -222,6 +222,8 @@ At GUI startup, an existing filesystem entry at the resolved Listen path leaves 
 The GUI uses MyGo's Go-only `ui` package. Views rebuild from application state, and virtualized tables create visible rows on demand. The main identity table reuses sorted rows between state changes. The picker reuses searchable identities and matches between query changes. Native windows do not start a WebView or load HTML or JavaScript. `mygo.Theme.SetSource` applies `gui.theme` before the event loop starts and after Settings applies a new value. The first launch defaults to Light. `internal/guitable.CompactTheme` preserves the selected theme and supplies matching compact palettes for the main window, Settings, About, and the SSH key picker. The theme is part of the active TOML configuration and is saved with File > Save.
 
 Windows and Linux draw the File and Help menus as themed MyGo UI popovers so their bars and dropdowns follow the app palette; MyGo's system menus retain the operating system's theme. macOS uses the native application menu.
+
+The main window and SSH key picker are calibrated to show five full identity rows and only a small strip of the sixth row. Preserve that preview when changing window dimensions, card spacing, or table row height. Main window initial/minimum heights are 410/380 on Windows, 357/327 on macOS, and 347/317 on Linux. Picker heights are 389/363 on Windows, 383/363 on macOS, and 343/333 on Linux.
 
 MyGo draws the UI with Metal on macOS, Direct3D 11 on Windows, and OpenGL on Linux. Native file dialogs, clipboard access, and tray integration use MyGo's platform APIs. Linux needs GTK 3 at runtime; tray integration additionally needs `libayatana-appindicator3`.
 

@@ -29,6 +29,8 @@ func guiDisplayFilePath(path string) string {
 	return filepath.Clean(path)
 }
 
+func guiFormatPathInput(path string) string { return path }
+
 func guiFilePathFromDisplay(path string) string { return path }
 
 func guiListenPathForConfig(endpoint string) string { return endpoint }

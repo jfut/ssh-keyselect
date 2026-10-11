@@ -40,6 +40,10 @@ sequenceDiagram
                 Agent-->>Proxy: SSH_AGENT_SUCCESS
             else Upstream agent rejects binding
                 Agent-->>Proxy: SSH_AGENT_FAILURE
+                opt Explicit compatibility setting is enabled
+                    Proxy->>Proxy: Retain verified context; mark upstream chain unavailable
+                    Note over Proxy,Agent: Later identity and signing requests omit session bindings
+                end
             end
             Proxy->>Agent: Close temporary connection
             Proxy-->>SSH: Return the binding result
@@ -113,7 +117,7 @@ sequenceDiagram
 
 OpenSSH records session bindings for the lifetime of an agent connection and rejects a later binding on a connection already bound for authentication ([OpenSSH agent protocol](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.agent)).
 
-The proxy opens a temporary upstream session for each bound operation and replays the verified binding chain before forwarding the request. This preserves session context for OpenSSH-compatible agents without holding a connection open while the picker waits. Without session bindings, ordinary requests use the upstream agent directly.
+The proxy opens a temporary upstream session for each bound operation and replays the verified binding chain before forwarding the request. This preserves session context for OpenSSH-compatible agents without holding a connection open while the picker waits. Without session bindings, ordinary requests use the upstream agent directly. By default, an explicit upstream refusal blocks signing for that frontend connection. When `agent.allow_unbound_signing_on_bind_failure` is enabled, an explicit `SSH_AGENT_FAILURE` or extension failure during binding activates a per-connection fallback: KeySelect retains its locally verified context, retries identity listing without bindings, and retries signing without bindings after a replay refusal. Other setup and I/O errors do not activate the fallback. This can bypass upstream destination restrictions, so the setting is off by default.
 
 #### Selection cache
 
@@ -223,7 +227,7 @@ MyGo draws the UI with Metal on macOS, Direct3D 11 on Windows, and OpenGL on Lin
 
 #### Settings layout
 
-Settings sections use compact, content-sized layouts, and the Cancel/Apply footer centers its buttons in the remaining window height. `openSettings` sets a fixed `Height` and `MinHeight` for each platform (530 on Windows, 490 on macOS, and 470 on Linux), so adding or removing rows changes the vertical space around those buttons. When changing Settings items, update both window dimensions to account for the rendered content change and preserve the existing clearance above and below the footer. Keep the section gaps and padding consistent, and compare Windows, macOS, and Linux layouts because native title bars and macOS rounded edges change the available content area.
+Settings sections use compact, content-sized layouts. `guiDialogActionFooter` uses `.Grow(1).Center()`, which splits the unused window height above and below the Cancel/Apply row. Keep those gaps at their current size when adding or removing Settings content: change `Height` and `MinHeight` in `openSettings` by the same rendered-height delta as the content change on each platform. For example, adding a 24-DIP row requires increasing each platform's height by 24 DIPs; removing content requires reducing it by the same amount. Measure the rendered delta because wrapped labels can add more than one line. Current heights are 550 on Windows, 510 on macOS, and 490 on Linux, accounting for the additional Upstream checkbox row. Keep the section gaps and padding consistent, and compare Windows, macOS, and Linux layouts because native title bars and macOS rounded edges change the available content area.
 
 Before the MyGo event loop starts, `PathUserData` is set to the `ssh-keyselect` directory under the platform user configuration directory and that directory is created:
 

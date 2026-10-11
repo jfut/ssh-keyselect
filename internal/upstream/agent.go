@@ -20,6 +20,9 @@ import (
 // RequestTimeout bounds connection setup and non-interactive requests, excluding picker and signing approval waits.
 const RequestTimeout = 10 * time.Second
 
+// ErrSessionBindingRejected marks an explicit upstream refusal of session-bind.
+var ErrSessionBindingRejected = errors.New("upstream agent rejected SSH session binding")
+
 // Agent is the subset of SSH agent operations used by the proxy.
 type Agent interface {
 	List(context.Context) ([]identity.Identity, error)
@@ -64,8 +67,11 @@ func (s *agentEndpointSession) Bind(ctx context.Context, binding []byte) error {
 	if err != nil {
 		return fmt.Errorf("forward SSH session binding: %w", err)
 	}
+	if len(response) == 1 && (response[0] == protocol.Failure || response[0] == protocol.ExtensionFailure) {
+		return ErrSessionBindingRejected
+	}
 	if len(response) != 1 || response[0] != protocol.Success {
-		return errors.New("upstream agent rejected SSH session binding")
+		return errors.New("upstream agent returned an invalid SSH session-binding response")
 	}
 	return nil
 }

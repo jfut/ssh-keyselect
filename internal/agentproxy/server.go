@@ -35,12 +35,13 @@ var errSelectionTimeout = errors.New("identity selection timed out")
 
 // Server serves SSH agent requests while isolating authorization state per client connection.
 type Server struct {
-	Agent            upstream.Agent
-	Selector         selector.Selector
-	Logger           *slog.Logger
-	autoSelectMu     sync.RWMutex
-	autoSelect       bool
-	selectionTimeout atomic.Int64
+	Agent                            upstream.Agent
+	Selector                         selector.Selector
+	Logger                           *slog.Logger
+	autoSelectMu                     sync.RWMutex
+	autoSelect                       bool
+	selectionTimeout                 atomic.Int64
+	allowUnboundSigningOnBindFailure atomic.Bool
 }
 
 // SetAutoSelect temporarily bypasses the picker and exposes every upstream identity.
@@ -70,6 +71,11 @@ func (s *Server) selectionTimeoutDuration() time.Duration {
 		return timeout
 	}
 	return defaultSelectionTimeout
+}
+
+// SetAllowUnboundSigningOnBindFailure opts into signing after upstream session-bind refusal.
+func (s *Server) SetAllowUnboundSigningOnBindFailure(enabled bool) {
+	s.allowUnboundSigningOnBindFailure.Store(enabled)
 }
 
 // Serve accepts frontend connections until ctx is cancelled or the listener fails.
@@ -205,11 +211,14 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 	var upstreamSessionBinds [][]byte
 	var sessionBindingBytes int
 	upstreamSessionBindingRejected := false
+	// This permits selected signatures after an explicit refusal, at the cost of upstream destination restrictions.
+	upstreamSessionBindingFallback := false
 	resetBindingChain := func() {
 		sessionBinds = nil
 		upstreamSessionBinds = nil
 		sessionBindingBytes = 0
 		upstreamSessionBindingRejected = false
+		upstreamSessionBindingFallback = false
 		cachedResponse = nil
 		clear(selected)
 	}
@@ -229,6 +238,13 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 				}
 				if cachedResponse == nil {
 					available, err := listAgent(ctx, s.Agent, upstreamSessionBinds, requestTimeout)
+					if errors.Is(err, upstream.ErrSessionBindingRejected) && s.allowUnboundSigningOnBindFailure.Load() {
+						upstreamSessionBindingFallback = true
+						upstreamSessionBindingRejected = true
+						upstreamSessionBinds = nil
+						log.Warn("upstream rejected SSH session binding; continuing without upstream session binding", "operation", "list identities", "error", err)
+						available, err = listAgent(ctx, s.Agent, nil, requestTimeout)
+					}
 					var chosen []identity.Identity
 					if err == nil {
 						selectionCtx, cancelSelection := s.newSelectionContext(ctx)
@@ -313,6 +329,16 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 				}
 				log.Info("verified SSH host context for identity selection", "host_key", binding.display.Fingerprint, "forwarding", binding.display.IsForwarding)
 				if upstreamSessionBindingRejected {
+					if upstreamSessionBindingFallback {
+						if len(binding.raw) <= maxSessionBindingBytes-sessionBindingBytes {
+							binding.display.KnownHosts = sessionKnownHostNames(binding.hostKey)
+							binding.hostKey = nil
+							sessionBinds = append(sessionBinds, binding)
+							sessionBindingBytes += len(binding.raw)
+						} else {
+							log.Warn("rejected excessive SSH session-binding data", "limit_bytes", maxSessionBindingBytes)
+						}
+					}
 					if !writeFailure(conn) {
 						return
 					}
@@ -328,7 +354,19 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 				err = bindAgentSessionChain(ctx, s.Agent, upstreamSessionBinds, binding.raw, requestTimeout)
 				if err != nil {
 					upstreamSessionBindingRejected = true
-					log.Warn("upstream agent rejected SSH session binding", "error", err)
+					if errors.Is(err, upstream.ErrSessionBindingRejected) && s.allowUnboundSigningOnBindFailure.Load() {
+						upstreamSessionBindingFallback = true
+						upstreamSessionBinds = nil
+						if len(binding.raw) <= maxSessionBindingBytes-sessionBindingBytes {
+							binding.display.KnownHosts = sessionKnownHostNames(binding.hostKey)
+							binding.hostKey = nil
+							sessionBinds = append(sessionBinds, binding)
+							sessionBindingBytes += len(binding.raw)
+						}
+						log.Warn("upstream rejected SSH session binding; continuing without upstream session binding", "operation", "bind session", "error", err)
+					} else {
+						log.Warn("upstream agent rejected SSH session binding", "error", err)
+					}
 					if !writeFailure(conn) {
 						return
 					}
@@ -355,7 +393,7 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 					}
 					continue
 				}
-				if upstreamSessionBindingRejected {
+				if upstreamSessionBindingRejected && !upstreamSessionBindingFallback {
 					if !writeFailure(conn) {
 						return
 					}
@@ -363,6 +401,13 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 				}
 				log.Info("signature requested", "fingerprint", identity.Fingerprint(keyBlob))
 				response, err := roundTripAgent(ctx, s.Agent, upstreamSessionBinds, message, requestTimeout)
+				if errors.Is(err, upstream.ErrSessionBindingRejected) && s.allowUnboundSigningOnBindFailure.Load() {
+					upstreamSessionBindingFallback = true
+					upstreamSessionBindingRejected = true
+					upstreamSessionBinds = nil
+					log.Warn("upstream rejected SSH session binding; continuing without upstream session binding", "operation", "sign", "error", err)
+					response, err = roundTripAgent(ctx, s.Agent, nil, message, requestTimeout)
+				}
 				if err != nil {
 					if ctx.Err() != nil {
 						return

@@ -22,6 +22,7 @@ const (
 	ExtensionRequest  byte = 27
 	Failure           byte = 5
 	Success           byte = 6
+	ExtensionFailure  byte = 28
 
 	SessionBindExtension = "session-bind@openssh.com"
 

@@ -323,37 +323,39 @@ func guiChooseConfigToSave(parent *mygo.Window, currentPath string) (string, err
 
 // guiSettingsValues captures the controls so Apply can recognize an untouched dialog.
 type guiSettingsValues struct {
-	upstreamPath     string
-	listenPath       string
-	logFile          string
-	upstreamMode     string
-	listenMode       string
-	logLevel         string
-	theme            string
-	selectionTimeout float64
+	upstreamPath                     string
+	listenPath                       string
+	logFile                          string
+	upstreamMode                     string
+	listenMode                       string
+	logLevel                         string
+	theme                            string
+	selectionTimeout                 float64
+	allowUnboundSigningOnBindFailure bool
 }
 
 type guiSettingsState struct {
-	app                *guiApp
-	window             *mygo.Window
-	cfg                config.Config
-	initialValues      guiSettingsValues
-	upstreamPath       string
-	listenPath         string
-	logFile            string
-	upstreamMode       string
-	listenMode         string
-	logLevel           string
-	theme              string
-	selectionTimeout   float64
-	initialListenMode  transport.Mode
-	previousListenMode string
-	lastFilesystemPath string
-	applying           bool
-	browsingUpstream   bool
-	browsingListen     bool
-	browsingLog        bool
-	err                string
+	app                              *guiApp
+	window                           *mygo.Window
+	cfg                              config.Config
+	initialValues                    guiSettingsValues
+	upstreamPath                     string
+	listenPath                       string
+	logFile                          string
+	upstreamMode                     string
+	listenMode                       string
+	logLevel                         string
+	theme                            string
+	selectionTimeout                 float64
+	allowUnboundSigningOnBindFailure bool
+	initialListenMode                transport.Mode
+	previousListenMode               string
+	lastFilesystemPath               string
+	applying                         bool
+	browsingUpstream                 bool
+	browsingListen                   bool
+	browsingLog                      bool
+	err                              string
 }
 
 func (a *guiApp) openSettings() {
@@ -366,14 +368,14 @@ func (a *guiApp) openSettings() {
 		mygo.Dialog.Error("Could not open settings.", err.Error())
 		return
 	}
-	// Keep the centered settings footer's vertical margins consistent across platforms.
-	height, minHeight := 530, 530
+	// The Upstream checkbox adds one text line and section gap to the prior Settings content.
+	height, minHeight := 550, 550
 	switch runtime.GOOS {
 	case "darwin":
 		// Leave rounded-edge clearance without adding excess space around the actions.
-		height, minHeight = 490, 490
+		height, minHeight = 510, 510
 	case "linux":
-		height, minHeight = 470, 470
+		height, minHeight = 490, 490
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: "Settings", Parent: a.window, Modal: true,
@@ -419,9 +421,10 @@ func newGUISettingsState(app *guiApp, cfg config.Config) (*guiSettingsState, err
 		listenPath:   guiDisplayEndpointPath(listenEndpoint),
 		logFile:      guiDisplayFilePath(cfg.Log.File),
 		upstreamMode: upstreamMode, listenMode: listenMode, logLevel: strings.ToLower(cfg.Log.Level),
-		theme:             guiThemeLabel(cfg.GUI.Theme),
-		selectionTimeout:  float64(cfg.Agent.SelectionTimeout),
-		initialListenMode: initialListenMode, previousListenMode: listenMode,
+		theme:                            guiThemeLabel(cfg.GUI.Theme),
+		selectionTimeout:                 float64(cfg.Agent.SelectionTimeout),
+		allowUnboundSigningOnBindFailure: cfg.Agent.AllowUnboundSigningOnBindFailure,
+		initialListenMode:                initialListenMode, previousListenMode: listenMode,
 		lastFilesystemPath: func() string {
 			if guiEndpointPathIsPipe(listenEndpoint) {
 				return ""
@@ -438,6 +441,7 @@ func (s *guiSettingsState) values() guiSettingsValues {
 		upstreamPath: s.upstreamPath, listenPath: s.listenPath, logFile: s.logFile,
 		upstreamMode: s.upstreamMode, listenMode: s.listenMode, logLevel: s.logLevel,
 		theme: s.theme, selectionTimeout: s.selectionTimeout,
+		allowUnboundSigningOnBindFailure: s.allowUnboundSigningOnBindFailure,
 	}
 }
 
@@ -540,6 +544,9 @@ func (s *guiSettingsState) endpointSection(c *ui.Context, theme *ui.Theme, title
 				}
 			}
 		})
+		if upstream {
+			ui.Checkbox(c, &s.allowUnboundSigningOnBindFailure, "Allow signing after upstream rejects session binding (required for 1Password)")
+		}
 	})
 }
 
@@ -669,6 +676,7 @@ func (s *guiSettingsState) buildConfig() (config.Config, error) {
 	cfg.Agent.Listen = listenEndpoint
 	cfg.Agent.ListenMode = listenMode
 	cfg.Agent.SelectionTimeout = int(s.selectionTimeout)
+	cfg.Agent.AllowUnboundSigningOnBindFailure = s.allowUnboundSigningOnBindFailure
 	cfg.Log.File = config.ExpandPath(guiFilePathFromDisplay(s.logFile))
 	cfg.Log.Level = s.logLevel
 	cfg.GUI.Theme = guiThemeValue(s.theme)

@@ -35,11 +35,12 @@ type Config struct {
 }
 
 type AgentConfig struct {
-	Listen           string         `toml:"listen"`
-	Upstream         string         `toml:"upstream"`
-	UpstreamMode     transport.Mode `toml:"upstream_mode"`
-	ListenMode       transport.Mode `toml:"listen_mode"`
-	SelectionTimeout int            `toml:"selection_timeout"`
+	Listen                           string         `toml:"listen"`
+	Upstream                         string         `toml:"upstream"`
+	UpstreamMode                     transport.Mode `toml:"upstream_mode"`
+	ListenMode                       transport.Mode `toml:"listen_mode"`
+	SelectionTimeout                 int            `toml:"selection_timeout"`
+	AllowUnboundSigningOnBindFailure bool           `toml:"allow_unbound_signing_on_bind_failure"`
 }
 
 type LogConfig struct {
@@ -59,11 +60,12 @@ type saveConfig struct {
 }
 
 type saveAgentConfig struct {
-	Listen           tomlPath       `toml:"listen"`
-	Upstream         tomlPath       `toml:"upstream"`
-	UpstreamMode     transport.Mode `toml:"upstream_mode"`
-	ListenMode       transport.Mode `toml:"listen_mode"`
-	SelectionTimeout int            `toml:"selection_timeout"`
+	Listen                           tomlPath       `toml:"listen"`
+	Upstream                         tomlPath       `toml:"upstream"`
+	UpstreamMode                     transport.Mode `toml:"upstream_mode"`
+	ListenMode                       transport.Mode `toml:"listen_mode"`
+	SelectionTimeout                 int            `toml:"selection_timeout"`
+	AllowUnboundSigningOnBindFailure bool           `toml:"allow_unbound_signing_on_bind_failure"`
 }
 
 type tomlPath string
@@ -93,11 +95,12 @@ func isTOMLLiteralString(value string) bool {
 func configForSave(cfg Config) saveConfig {
 	return saveConfig{
 		Agent: saveAgentConfig{
-			Listen:           tomlPath(cfg.Agent.Listen),
-			Upstream:         tomlPath(cfg.Agent.Upstream),
-			UpstreamMode:     cfg.Agent.UpstreamMode,
-			ListenMode:       cfg.Agent.ListenMode,
-			SelectionTimeout: cfg.Agent.SelectionTimeout,
+			Listen:                           tomlPath(cfg.Agent.Listen),
+			Upstream:                         tomlPath(cfg.Agent.Upstream),
+			UpstreamMode:                     cfg.Agent.UpstreamMode,
+			ListenMode:                       cfg.Agent.ListenMode,
+			SelectionTimeout:                 cfg.Agent.SelectionTimeout,
+			AllowUnboundSigningOnBindFailure: cfg.Agent.AllowUnboundSigningOnBindFailure,
 		},
 		Log: cfg.Log,
 		GUI: cfg.GUI,

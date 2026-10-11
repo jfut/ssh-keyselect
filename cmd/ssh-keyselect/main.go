@@ -44,14 +44,15 @@ type cliOptions struct {
 }
 
 type sshCommandOptions struct {
-	Upstream         *string  `help:"Upstream SSH agent endpoint." placeholder:"ENDPOINT"`
-	UpstreamMode     *string  `help:"Upstream protocol mode (auto, cygwin, unix, named-pipe, wsl1)." placeholder:"MODE"`
-	Listen           *string  `help:"Proxy endpoint for OpenSSH." placeholder:"ENDPOINT"`
-	ListenMode       *string  `help:"Proxy protocol mode (auto, cygwin, unix, named-pipe, wsl1)." placeholder:"MODE"`
-	LogLevel         *string  `help:"Log level (off, debug, info, warn, error)." placeholder:"LEVEL"`
-	LogFile          *string  `help:"Write ssh-keyselect diagnostic logs to a file, replacing it for this run." placeholder:"FILE"`
-	SelectionTimeout *int     `help:"Seconds to wait for a key selection (default: 120, range: 1 to 86399)." placeholder:"SECONDS"`
-	SSHArgs          []string `arg:"" optional:"" passthrough:"all" name:"SSH arguments" help:"Arguments passed to OpenSSH."`
+	Upstream                         *string  `help:"Upstream SSH agent endpoint." placeholder:"ENDPOINT"`
+	UpstreamMode                     *string  `help:"Upstream protocol mode (auto, cygwin, unix, named-pipe, wsl1)." placeholder:"MODE"`
+	Listen                           *string  `help:"Proxy endpoint for OpenSSH." placeholder:"ENDPOINT"`
+	ListenMode                       *string  `help:"Proxy protocol mode (auto, cygwin, unix, named-pipe, wsl1)." placeholder:"MODE"`
+	LogLevel                         *string  `help:"Log level (off, debug, info, warn, error)." placeholder:"LEVEL"`
+	LogFile                          *string  `help:"Write ssh-keyselect diagnostic logs to a file, replacing it for this run." placeholder:"FILE"`
+	SelectionTimeout                 *int     `help:"Seconds to wait for a key selection (default: 120, range: 1 to 86399)." placeholder:"SECONDS"`
+	AllowUnboundSigningOnBindFailure bool     `help:"Allow signing without upstream session binding after an explicit upstream refusal (weakens upstream restrictions)."`
+	SSHArgs                          []string `arg:"" optional:"" passthrough:"all" name:"SSH arguments" help:"Arguments passed to OpenSSH."`
 }
 
 type listCommandOptions struct {
@@ -163,6 +164,9 @@ func executeSSH(options sshCommandOptions, stdout, stderr io.Writer) (exitCode i
 	if options.SelectionTimeout != nil {
 		cfg.Agent.SelectionTimeout = *options.SelectionTimeout
 	}
+	if options.AllowUnboundSigningOnBindFailure {
+		cfg.Agent.AllowUnboundSigningOnBindFailure = true
+	}
 	if options.LogFile != nil && *options.LogFile == "" {
 		_, _ = fmt.Fprintf(stderr, "%s: --log-file requires a value\n", commandName)
 		return 2
@@ -232,6 +236,7 @@ func executeSSH(options sshCommandOptions, stdout, stderr io.Writer) (exitCode i
 		Logger:   logger,
 	}
 	server.SetSelectionTimeout(time.Duration(cfg.Agent.SelectionTimeout) * time.Second)
+	server.SetAllowUnboundSigningOnBindFailure(cfg.Agent.AllowUnboundSigningOnBindFailure)
 	ctx, cancelProxy := context.WithCancel(context.Background())
 	defer cancelProxy()
 	commandCtx, cancelCommand := context.WithCancel(ctx)

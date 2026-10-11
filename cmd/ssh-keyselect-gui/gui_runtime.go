@@ -139,6 +139,7 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 	applyAgentSettings := func() {
 		r.agent.Set(upstream.EndpointAgent{Path: cfg.Agent.Upstream, Mode: cfg.Agent.UpstreamMode})
 		r.server.SetSelectionTimeout(time.Duration(cfg.Agent.SelectionTimeout) * time.Second)
+		r.server.SetAllowUnboundSigningOnBindFailure(cfg.Agent.AllowUnboundSigningOnBindFailure)
 		if logFileChanged {
 			r.logOutput.replace(preparedLogFile)
 			preparedLogFile = nil

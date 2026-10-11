@@ -84,14 +84,13 @@ func (a *guiApp) start() {
 }
 
 func (a *guiApp) createMainWindow() {
-	// Windows dimensions are the default; adjust other platforms to show five key
-	// rows.
-	width, height, minHeight := 920, 415, 385
+	// Keep five full key rows visible with only a small strip of the sixth row.
+	width, height, minHeight := 920, 410, 380
 	switch runtime.GOOS {
 	case "darwin":
-		height, minHeight = 362, 332
+		height, minHeight = 357, 327
 	case "linux":
-		height, minHeight = 352, 322
+		height, minHeight = 347, 317
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title:     guiMainWindowTitle(guiDisplayEndpointPath(a.actualListen), a.dirty),
@@ -346,9 +345,6 @@ func (a *guiApp) identityCard(c *ui.Context, theme *ui.Theme) {
 		})
 		if table.Shortcut(ui.Cmd, ui.KeyC) && a.selectedIdentity >= 0 && a.selectedIdentity < len(rows) {
 			mygo.Clipboard.WriteText(guitable.IdentityCopyText(rows[a.selectedIdentity].Identity))
-		}
-		if len(rows) == 0 && !a.loading && a.keyError == "" {
-			ui.Text(c, "No identities are available from the upstream agent.").TextColor(theme.TextMuted)
 		}
 	})
 }

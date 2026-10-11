@@ -122,14 +122,13 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 	}
 	title := fmt.Sprintf("%s [%s - %s]", identitySelectionPrompt, branding.Name, selectionDisplayTime(shownAt))
 	windowParent, windowModal := pickerWindowOwnership(parent)
-	// Windows dimensions are the default; adjust other platforms to show five key
-	// rows.
-	height, minHeight := 386, 360
+	// Keep five full key rows visible with only a small strip of the sixth row.
+	height, minHeight := 389, 363
 	switch runtime.GOOS {
 	case "darwin":
-		height = 380
+		height = 383
 	case "linux":
-		height, minHeight = 340, 330
+		height, minHeight = 343, 333
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: title, Parent: windowParent, Modal: windowModal, AlwaysOnTop: true,

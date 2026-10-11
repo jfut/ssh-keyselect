@@ -529,6 +529,9 @@ func (s *guiSettingsState) endpointSection(c *ui.Context, theme *ui.Theme, title
 			if upstream {
 				input.Placeholder("Leave blank to configure later")
 			}
+			if input.Changed() {
+				*path = guiFormatPathInput(*path)
+			}
 			browse := ui.Button(c, "Browse…").Disabled(guiEndpointPathIsPipe(*path) || browsing || guiModeFromDisplay(*mode) == transport.NamedPipe)
 			if browse.Clicked() {
 				s.browse(upstream)
@@ -545,7 +548,7 @@ func (s *guiSettingsState) endpointSection(c *ui.Context, theme *ui.Theme, title
 			}
 		})
 		if upstream {
-			ui.Checkbox(c, &s.allowUnboundSigningOnBindFailure, "Allow signing after upstream rejects session binding (required for 1Password)")
+			ui.Checkbox(c, &s.allowUnboundSigningOnBindFailure, "Allow signing after upstream rejects session binding (Required for 1Password)")
 		}
 	})
 }
@@ -559,7 +562,10 @@ func (s *guiSettingsState) loggingSection(c *ui.Context, theme *ui.Theme) {
 		ui.Text(c, "Logging").FontWeight(500)
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Log file").Width(theme.Space(26)).Shrink(0)
-			ui.TextInput(c, &s.logFile).Label("Log file").Placeholder("Leave blank to log to standard error").Grow(1)
+			input := ui.TextInput(c, &s.logFile).Label("Log file").Placeholder("Leave blank to log to standard error").Grow(1)
+			if input.Changed() {
+				s.logFile = guiFormatPathInput(s.logFile)
+			}
 			browse := ui.Button(c, "Browse…").Disabled(s.browsingLog)
 			if browse.Clicked() {
 				s.browseLogFile()

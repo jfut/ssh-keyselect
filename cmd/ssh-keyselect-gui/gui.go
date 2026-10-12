@@ -157,8 +157,12 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	if err := cfg.Validate(); err != nil {
 		return cmdutil.ReportError(stderr, guiCommandName, err)
 	}
+	upstreamPath, err := config.ResolveUpstream(cfg.Agent.Upstream)
+	if err != nil {
+		return cmdutil.ReportError(stderr, guiCommandName, err)
+	}
 
-	listenPath, effectiveListenMode, err := resolveGUIListen(cfg)
+	listenPath, effectiveListenMode, err := resolveGUIListenWithUpstream(cfg, upstreamPath)
 	if err != nil {
 		return cmdutil.ReportError(stderr, guiCommandName, err)
 	}
@@ -185,7 +189,7 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	slog.SetDefault(logger)
 	ctx, stop := context.WithCancel(context.Background())
 	endpointAgent := &guiEndpointAgent{}
-	endpointAgent.Set(upstream.EndpointAgent{Path: cfg.Agent.Upstream, Mode: cfg.Agent.UpstreamMode})
+	endpointAgent.Set(upstream.EndpointAgent{Path: upstreamPath, Mode: cfg.Agent.UpstreamMode})
 	guiSelector := selector.NewGUISelector()
 	guiSelector.SetRefreshCallback(func(refreshCtx context.Context) ([]identity.Identity, error) {
 		endpoint, _ := endpointAgent.Snapshot()

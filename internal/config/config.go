@@ -107,6 +107,47 @@ func configForSave(cfg Config) saveConfig {
 	}
 }
 
+// UpstreamEnvironmentReference returns the config value for an environment-backed endpoint.
+func UpstreamEnvironmentReference(name string) string {
+	return "env:" + name
+}
+
+// UpstreamEnvironmentVariable returns the variable name from an env: upstream value.
+func UpstreamEnvironmentVariable(value string) (string, bool) {
+	name, ok := strings.CutPrefix(value, "env:")
+	return name, ok
+}
+
+// ResolveUpstream expands an environment-backed endpoint or an ordinary configured path.
+func ResolveUpstream(value string) (string, error) {
+	name, environmentBacked := UpstreamEnvironmentVariable(value)
+	if !environmentBacked {
+		return ExpandPath(value), nil
+	}
+	if !validEnvironmentVariableName(name) {
+		return "", fmt.Errorf("agent.upstream must use env: followed by a valid environment variable name")
+	}
+	endpoint, ok := os.LookupEnv(name)
+	if !ok || endpoint == "" {
+		return "", fmt.Errorf("agent.upstream references environment variable %q, but it is unset or empty", name)
+	}
+	return ExpandPath(endpoint), nil
+}
+
+func validEnvironmentVariableName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for index, char := range name {
+		letter := char >= 'A' && char <= 'Z' || char >= 'a' && char <= 'z'
+		if letter || char == '_' || index > 0 && char >= '0' && char <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // Default returns conservative defaults for GUI and terminal commands.
 func Default() Config {
 	return Config{
@@ -248,6 +289,9 @@ func Save(path string, cfg Config) error {
 
 // Validate rejects configuration that this release cannot safely honor.
 func (c Config) Validate() error {
+	if name, environmentBacked := UpstreamEnvironmentVariable(c.Agent.Upstream); environmentBacked && !validEnvironmentVariableName(name) {
+		return fmt.Errorf("agent.upstream must use env: followed by a valid environment variable name")
+	}
 	if c.Agent.SelectionTimeout < 1 || c.Agent.SelectionTimeout > maxSelectionTimeoutSeconds {
 		return fmt.Errorf("agent.selection_timeout must be between 1 and %d seconds", maxSelectionTimeoutSeconds)
 	}

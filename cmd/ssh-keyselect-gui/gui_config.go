@@ -522,7 +522,9 @@ func guiDefaultConfigDirectory() (string, error) {
 
 // guiSettingsValues captures the controls so Apply can recognize an untouched dialog.
 type guiSettingsValues struct {
+	upstreamSource                   string
 	upstreamPath                     string
+	upstreamEnvName                  string
 	listenPath                       string
 	logFile                          string
 	upstreamMode                     string
@@ -538,7 +540,10 @@ type guiSettingsState struct {
 	window                           *mygo.Window
 	cfg                              config.Config
 	initialValues                    guiSettingsValues
+	upstreamSource                   string
 	upstreamPath                     string
+	upstreamEnvName                  string
+	resolvedUpstream                 string
 	listenPath                       string
 	logFile                          string
 	upstreamMode                     string
@@ -550,12 +555,20 @@ type guiSettingsState struct {
 	initialListenMode                transport.Mode
 	previousListenMode               string
 	lastFilesystemPath               string
+	baseWindowHeight                 int
+	errorWindowExpanded              bool
 	applying                         bool
 	browsingUpstream                 bool
 	browsingListen                   bool
 	browsingLog                      bool
 	err                              string
 }
+
+const (
+	guiUpstreamPathSource        = "Socket path"
+	guiUpstreamEnvironmentSource = "Environment variable"
+	guiSettingsErrorWindowHeight = 40
+)
 
 func (a *guiApp) openSettings() {
 	if a.applying {
@@ -567,14 +580,14 @@ func (a *guiApp) openSettings() {
 		mygo.Dialog.Error("Could not open settings.", err.Error())
 		return
 	}
-	// The Upstream checkbox adds one text line and section gap to the prior Settings content.
-	height, minHeight := 550, 550
+	// Keep the centered footer compact while reserving room for the source selector.
+	height, minHeight := 566, 566
 	switch runtime.GOOS {
 	case "darwin":
 		// Match the Windows action spacing while preserving clearance around rounded sheet corners.
-		height, minHeight = 504, 504
+		height, minHeight = 520, 520
 	case "linux":
-		height, minHeight = 484, 484
+		height, minHeight = 500, 500
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: "Settings", Parent: a.window, Modal: true,
@@ -582,6 +595,7 @@ func (a *guiApp) openSettings() {
 		Content: ui.View(state.view),
 	})
 	state.window = window
+	state.baseWindowHeight = height
 	if icon, iconErr := guiassets.WindowIconPNG(); iconErr == nil {
 		_ = window.SetIcon(icon)
 	}
@@ -593,9 +607,14 @@ func (a *guiApp) openSettings() {
 }
 
 func newGUISettingsState(app *guiApp, cfg config.Config) (*guiSettingsState, error) {
+	upstreamEnvName, environmentBacked := config.UpstreamEnvironmentVariable(cfg.Agent.Upstream)
+	upstreamEndpoint, err := config.ResolveUpstream(cfg.Agent.Upstream)
+	if err != nil {
+		return nil, err
+	}
 	listenEndpoint := cfg.Agent.Listen
 	if listenEndpoint == "" {
-		defaultPath, _, err := guiDefaultListenEndpoint(cfg.Agent.Upstream, cfg.Agent.ListenMode)
+		defaultPath, _, err := guiDefaultListenEndpoint(upstreamEndpoint, cfg.Agent.ListenMode)
 		if err != nil {
 			return nil, err
 		}
@@ -603,7 +622,7 @@ func newGUISettingsState(app *guiApp, cfg config.Config) (*guiSettingsState, err
 	}
 	initialListenMode := cfg.Agent.ListenMode
 	if initialListenMode == transport.Auto {
-		resolvedMode, err := listener.ResolveMode(listenEndpoint, cfg.Agent.Upstream, transport.Auto)
+		resolvedMode, err := listener.ResolveMode(listenEndpoint, upstreamEndpoint, transport.Auto)
 		if err != nil {
 			return nil, err
 		}
@@ -614,11 +633,15 @@ func newGUISettingsState(app *guiApp, cfg config.Config) (*guiSettingsState, err
 	}
 	listenMode := guiDisplayModeName(initialListenMode)
 	upstreamMode := guiDisplayModeName(cfg.Agent.UpstreamMode)
+	upstreamSource := guiUpstreamPathSource
+	if environmentBacked {
+		upstreamSource = guiUpstreamEnvironmentSource
+	}
 	state := &guiSettingsState{
 		app: app, cfg: cfg,
-		upstreamPath: guiDisplayEndpointPath(cfg.Agent.Upstream),
-		listenPath:   guiDisplayEndpointPath(listenEndpoint),
-		logFile:      guiDisplayFilePath(cfg.Log.File),
+		upstreamSource: upstreamSource, upstreamPath: guiDisplayEndpointPath(upstreamEndpoint),
+		upstreamEnvName: upstreamEnvName, resolvedUpstream: upstreamEndpoint,
+		listenPath: guiDisplayEndpointPath(listenEndpoint), logFile: guiDisplayFilePath(cfg.Log.File),
 		upstreamMode: upstreamMode, listenMode: listenMode, logLevel: strings.ToLower(cfg.Log.Level),
 		theme:                            guiThemeLabel(cfg.GUI.Theme),
 		selectionTimeout:                 float64(cfg.Agent.SelectionTimeout),
@@ -637,7 +660,8 @@ func newGUISettingsState(app *guiApp, cfg config.Config) (*guiSettingsState, err
 
 func (s *guiSettingsState) values() guiSettingsValues {
 	return guiSettingsValues{
-		upstreamPath: s.upstreamPath, listenPath: s.listenPath, logFile: s.logFile,
+		upstreamSource: s.upstreamSource, upstreamPath: s.upstreamPath,
+		upstreamEnvName: s.upstreamEnvName, listenPath: s.listenPath, logFile: s.logFile,
 		upstreamMode: s.upstreamMode, listenMode: s.listenMode, logLevel: s.logLevel,
 		theme: s.theme, selectionTimeout: s.selectionTimeout,
 		allowUnboundSigningOnBindFailure: s.allowUnboundSigningOnBindFailure,
@@ -663,7 +687,7 @@ func (s *guiSettingsState) view(c *ui.Context) {
 		s.loggingSection(c, theme)
 		s.themeSection(c, theme)
 		if s.err != "" {
-			ui.Text(c, s.err).TextColor(theme.Danger)
+			ui.Text(c, s.err).MaxLines(2).Ellipsis("…").Tooltip(s.err).TextColor(theme.Danger)
 		}
 		if s.applying {
 			ui.Text(c, "Applying configuration…").TextColor(theme.TextMuted)
@@ -679,6 +703,29 @@ func (s *guiSettingsState) view(c *ui.Context) {
 			}
 		})
 	})
+	s.syncErrorWindowHeight()
+}
+
+// syncErrorWindowHeight grows the dialog while an error is visible so its actions stay in view.
+func (s *guiSettingsState) syncErrorWindowHeight() {
+	if s.window == nil || s.window.IsDestroyed() {
+		return
+	}
+	expanded := s.err != ""
+	if expanded == s.errorWindowExpanded {
+		return
+	}
+	width, height := s.window.Size()
+	minHeight := s.baseWindowHeight
+	if expanded {
+		height += guiSettingsErrorWindowHeight
+		minHeight += guiSettingsErrorWindowHeight
+	} else {
+		height = max(height-guiSettingsErrorWindowHeight, s.baseWindowHeight)
+	}
+	s.window.SetMinimumSize(580, minHeight)
+	s.window.SetSize(width, height)
+	s.errorWindowExpanded = expanded
 }
 
 // themeSection lets the user choose the GUI theme saved in config.toml.
@@ -722,20 +769,47 @@ func (s *guiSettingsState) endpointSection(c *ui.Context, theme *ui.Theme, title
 		Border(1, theme.Border).Radius(theme.Space(2)).Background(theme.Surface)
 	section.Children(func() {
 		ui.Text(c, title).FontWeight(500)
-		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Socket path").Width(theme.Space(26)).Shrink(0)
-			input := ui.TextInput(c, path).Label("Socket path").Grow(1)
-			if upstream {
-				input.Placeholder("Leave blank to configure later")
-			}
-			if input.Changed() {
-				*path = guiFormatPathInput(*path)
-			}
-			browse := ui.Button(c, "Browse…").Disabled(guiEndpointPathIsPipe(*path) || browsing || guiModeFromDisplay(*mode) == transport.NamedPipe)
-			if browse.Clicked() {
-				s.browse(upstream)
-			}
-		})
+		if upstream {
+			ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "Source").Width(theme.Space(26)).Shrink(0)
+				sourceChanged := false
+				ui.RadioGroup(c, func() {
+					for _, source := range []string{guiUpstreamPathSource, guiUpstreamEnvironmentSource} {
+						if ui.Radio(c, &s.upstreamSource, source, source).Changed() {
+							sourceChanged = true
+						}
+					}
+				}).Row().Label("Upstream source").Grow(1)
+				if sourceChanged {
+					s.changeUpstreamSource()
+				}
+			})
+		}
+		if upstream && s.upstreamSource == guiUpstreamEnvironmentSource {
+			ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "Variable").Width(theme.Space(26)).Shrink(0)
+				input := ui.TextInput(c, &s.upstreamEnvName).Label("Environment variable").
+					Placeholder("UPSTREAM_SSH_AUTH_SOCK").Grow(1)
+				if input.Changed() {
+					s.err = ""
+				}
+			})
+		} else {
+			ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "Socket path").Width(theme.Space(26)).Shrink(0)
+				input := ui.TextInput(c, path).Label("Socket path").Grow(1)
+				if upstream {
+					input.Placeholder("Leave blank to configure later")
+				}
+				if input.Changed() {
+					*path = guiFormatPathInput(*path)
+				}
+				browse := ui.Button(c, "Browse…").Disabled(guiEndpointPathIsPipe(*path) || browsing || guiModeFromDisplay(*mode) == transport.NamedPipe)
+				if browse.Clicked() {
+					s.browse(upstream)
+				}
+			})
+		}
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Mode").Width(theme.Space(26)).Shrink(0)
 			if ui.Select(c, mode, guiTransportModeOptions(upstream)).Label("Mode").Grow(1).Changed() {
@@ -833,6 +907,10 @@ func (s *guiSettingsState) changeListenMode() {
 
 // changeUpstreamMode updates the default agent path to match the selected transport.
 func (s *guiSettingsState) changeUpstreamMode() {
+	if s.upstreamSource == guiUpstreamEnvironmentSource {
+		s.err = ""
+		return
+	}
 	endpoint, err := guiDefaultUpstreamEndpoint(guiModeFromDisplay(s.upstreamMode))
 	if err != nil {
 		s.err = "Could not create an upstream endpoint: " + err.Error()
@@ -842,14 +920,27 @@ func (s *guiSettingsState) changeUpstreamMode() {
 	s.err = ""
 }
 
+func (s *guiSettingsState) changeUpstreamSource() {
+	if s.upstreamSource == guiUpstreamEnvironmentSource {
+		s.upstreamEnvName = "UPSTREAM_SSH_AUTH_SOCK"
+		if os.Getenv(s.upstreamEnvName) == "" && os.Getenv("SSH_AUTH_SOCK") != "" {
+			s.upstreamEnvName = "SSH_AUTH_SOCK"
+		}
+	}
+	s.err = ""
+}
+
 func (s *guiSettingsState) upstreamEndpoint() (string, error) {
+	if s.upstreamSource == guiUpstreamEnvironmentSource {
+		return config.ResolveUpstream(config.UpstreamEnvironmentReference(strings.TrimSpace(s.upstreamEnvName)))
+	}
 	if s.upstreamPath == "" {
 		return "", nil
 	}
 	return guiEndpointPathFromDialog(
 		guiEndpointPathFromDisplay(s.upstreamPath),
 		guiModeFromDisplay(s.upstreamMode),
-		s.cfg.Agent.Upstream,
+		s.resolvedUpstream,
 	)
 }
 
@@ -860,17 +951,36 @@ func (s *guiSettingsState) buildConfig() (config.Config, error) {
 	cfg := s.cfg
 	upstreamMode := guiModeFromDisplay(s.upstreamMode)
 	upstreamEndpoint := ""
-	if s.upstreamPath != "" {
-		if s.upstreamPath == guiDisplayEndpointPath(cfg.Agent.Upstream) && upstreamMode == cfg.Agent.UpstreamMode {
-			upstreamEndpoint = cfg.Agent.Upstream
-		} else {
+	resolvedUpstream := ""
+	switch s.upstreamSource {
+	case guiUpstreamEnvironmentSource:
+		upstreamEndpoint = config.UpstreamEnvironmentReference(strings.TrimSpace(s.upstreamEnvName))
+		var err error
+		resolvedUpstream, err = config.ResolveUpstream(upstreamEndpoint)
+		if err != nil {
+			return config.Config{}, err
+		}
+	case guiUpstreamPathSource:
+		if s.upstreamPath != "" {
+			_, configUsesEnvironment := config.UpstreamEnvironmentVariable(cfg.Agent.Upstream)
+			if !configUsesEnvironment && s.upstreamPath == guiDisplayEndpointPath(cfg.Agent.Upstream) && upstreamMode == cfg.Agent.UpstreamMode {
+				upstreamEndpoint = cfg.Agent.Upstream
+			} else {
+				var err error
+				upstreamEndpoint, err = guiEndpointPathFromDialog(
+					guiEndpointPathFromDisplay(s.upstreamPath), upstreamMode, s.resolvedUpstream)
+				if err != nil {
+					return config.Config{}, err
+				}
+			}
 			var err error
-			upstreamEndpoint, err = guiEndpointPathFromDialog(
-				guiEndpointPathFromDisplay(s.upstreamPath), upstreamMode, cfg.Agent.Upstream)
+			resolvedUpstream, err = config.ResolveUpstream(upstreamEndpoint)
 			if err != nil {
 				return config.Config{}, err
 			}
 		}
+	default:
+		return config.Config{}, fmt.Errorf("select an upstream source")
 	}
 	listenMode := guiModeFromDisplay(s.listenMode)
 	if cfg.Agent.ListenMode == transport.Auto && listenMode == s.initialListenMode {
@@ -882,7 +992,7 @@ func (s *guiSettingsState) buildConfig() (config.Config, error) {
 	} else {
 		var err error
 		listenEndpoint, err = guiEndpointPathFromDialog(
-			guiEndpointPathFromDisplay(s.listenPath), listenMode, upstreamEndpoint)
+			guiEndpointPathFromDisplay(s.listenPath), listenMode, resolvedUpstream)
 		if err != nil {
 			return config.Config{}, err
 		}
@@ -947,7 +1057,17 @@ func (s *guiSettingsState) apply() {
 	}
 	s.err = ""
 	// Derived defaults can make buildConfig differ even when the dialog is untouched.
-	if s.values() == s.initialValues || cfg == s.cfg {
+	unchanged := s.values() == s.initialValues || cfg == s.cfg
+	if s.upstreamSource == guiUpstreamEnvironmentSource {
+		resolvedUpstream, resolveErr := config.ResolveUpstream(cfg.Agent.Upstream)
+		if resolveErr != nil {
+			s.err = resolveErr.Error()
+			return
+		}
+		activeUpstream, _ := s.app.endpointAgent.Snapshot()
+		unchanged = unchanged && activeUpstream.Path == resolvedUpstream
+	}
+	if unchanged {
 		guiCloseWindowAfterFrame(s.window)
 		return
 	}

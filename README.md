@@ -6,14 +6,15 @@
 
 Selective SSH Agent Proxy
 
+[![OS](https://img.shields.io/badge/os-Windows%20%7C%20macOS%20%7C%20Linux-success)](https://github.com/jfut/ssh-keyselect/releases)
 [![Tag](https://img.shields.io/github/tag/jfut/ssh-keyselect.svg)](https://github.com/jfut/ssh-keyselect/releases)
 [![License](https://img.shields.io/badge/license-Apache%202-blue)](https://github.com/jfut/ssh-keyselect/blob/main/LICENSE)
+
+## Overview
 
 `SSH KeySelect` is an interactive SSH agent proxy that lets you choose which keys an SSH client can offer from your existing agent. By rejecting signing requests for unselected keys, it helps mitigate **SSH Agent Hijacking**.
 
 Private keys stay in your existing agent. Offering fewer keys can reduce the risk of reaching an SSH server's `MaxAuthTries` limit.
-
-## Overview
 
 ### SSH connections from your machine
 
@@ -27,6 +28,84 @@ With agent forwarding and `Auto Select Off`, a remote process such as Git or a n
 
 > [!IMPORTANT]
 > Forwarding your agent creates an **SSH Agent Hijacking** risk: even though private keys stay on your machine, a remote host can request signatures from your agent. A malicious or compromised host can use those signatures to access SSH services and Git hosts reachable with your credentials, including reading or pushing to repositories. Forward your agent only to hosts you trust. See the [OpenSSH manual](https://man.openbsd.org/ssh) for its warning about agent forwarding.
+
+## Screenshots
+
+### Main Window
+
+<table>
+  <tr>
+    <td width="50%" valign="top" align="center">
+      <figure>
+        <a href="https://github.com/jfut/ssh-keyselect-assets/blob/main/screenshots/windows-main-light.png">
+          <img src="https://github.com/jfut/ssh-keyselect-assets/raw/refs/heads/main/screenshots/windows-main-light.png" alt="Windows Main Window (Light Theme)" width="100%">
+        </a>
+        <figcaption><strong>Windows (Light Theme)</strong></figcaption>
+      </figure>
+    </td>
+    <td width="50%" valign="top" align="center">
+      <figure>
+        <a href="https://github.com/jfut/ssh-keyselect-assets/blob/main/screenshots/windows-main-dark.png">
+          <img src="https://github.com/jfut/ssh-keyselect-assets/raw/refs/heads/main/screenshots/windows-main-dark.png" alt="Windows Main Window (Dark Theme)" width="100%">
+        </a>
+        <figcaption><strong>Windows (Dark Theme)</strong></figcaption>
+      </figure>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" align="center">
+      <figure>
+        <a href="https://github.com/jfut/ssh-keyselect-assets/blob/main/screenshots/macos-main-light.png">
+          <img src="https://github.com/jfut/ssh-keyselect-assets/raw/refs/heads/main/screenshots/macos-main-light.png" alt="macOS Main Window" width="100%">
+        </a>
+        <figcaption><strong>macOS</strong></figcaption>
+      </figure>
+    </td>
+    <td width="50%" valign="top" align="center">
+      <figure>
+        <a href="https://github.com/jfut/ssh-keyselect-assets/blob/main/screenshots/linux-main-light.png">
+          <img src="https://github.com/jfut/ssh-keyselect-assets/raw/refs/heads/main/screenshots/linux-main-light.png" alt="Linux Main Window" width="100%">
+        </a>
+        <figcaption><strong>Linux</strong></figcaption>
+      </figure>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" align="center">
+      <figure>
+        <a href="https://github.com/jfut/ssh-keyselect-assets/blob/main/screenshots/windows-settings-light.png">
+          <img src="https://github.com/jfut/ssh-keyselect-assets/raw/refs/heads/main/screenshots/windows-settings-light.png" alt="Settings" width="100%">
+        </a>
+        <figcaption><strong>Settings</strong></figcaption>
+      </figure>
+    </td>
+  </tr>
+</table>
+
+### Key Select
+
+This view shows the signing request tree for a multi-hop SSH connection using agent forwarding. The key filter narrows the list as you type.
+
+<table>
+  <tr>
+    <td width="50%" valign="top" align="center">
+      <figure>
+        <a href="https://github.com/jfut/ssh-keyselect-assets/blob/main/screenshots/windows-keyselect-light.png">
+          <img src="https://github.com/jfut/ssh-keyselect-assets/raw/refs/heads/main/screenshots/windows-keyselect-light.png" alt="Key Select (Light Theme)" width="100%">
+        </a>
+        <figcaption><strong>Key Select (Light Theme)</strong></figcaption>
+      </figure>
+    </td>
+    <td width="50%" valign="top" align="center">
+      <figure>
+        <a href="https://github.com/jfut/ssh-keyselect-assets/blob/main/screenshots/windows-keyselect-dark.png">
+          <img src="https://github.com/jfut/ssh-keyselect-assets/raw/refs/heads/main/screenshots/windows-keyselect-dark.png" alt="Key Select (Dark Theme)" width="100%">
+        </a>
+        <figcaption><strong>Key Select (Dark Theme)</strong></figcaption>
+      </figure>
+    </td>
+  </tr>
+</table>
 
 ## Installation
 
@@ -134,14 +213,14 @@ The GUI can start without an upstream agent. Configure its endpoints in Settings
 For Git Bash ([Git for Windows](https://gitforwindows.org/)) and Linux, start the GUI and set `SSH_AUTH_SOCK` to its default Listen endpoint:
 
 ```bash
-ssh-keyselect-gui &
+# Launch the GUI Version of SSH KeySelect
 export SSH_AUTH_SOCK="$HOME/.ssh/ssh-keyselect-agent.sock"
 ssh user@example.org
 ```
 
 #### VS Code on Windows
 
-Configure VS Code's [terminal profile](https://code.visualstudio.com/docs/terminal/profiles) to use Git Bash. Start the GUI with Listen mode set to `cygwin` and a Listen endpoint that matches `SSH_AUTH_SOCK` below. See the [Git Bash configuration example](#configuration) for setting the endpoint. Open User Settings (JSON) and add the following properties inside the existing top-level object. Keep your other settings. If any of these keys already exist, update them instead of adding duplicates; merge the `Git Bash` profile and `SSH_AUTH_SOCK` into the existing profile and environment objects. Replace `USERNAME` with your Windows account name:
+Configure VS Code's [terminal profile](https://code.visualstudio.com/docs/terminal/profiles) to use Git Bash. The `bash.exe` path below is for the Scoop `git-with-openssh` package; replace it with the path to your Git Bash executable if you installed Git Bash another way. Start the GUI with Listen mode set to `cygwin` and a Listen endpoint that matches `SSH_AUTH_SOCK` below. See the [Git Bash configuration example](#configuration) for setting the endpoint. Open User Settings (JSON) and add the following properties inside the existing top-level object. Keep your other settings. If any of these keys already exist, update them instead of adding duplicates; merge the `Git Bash` profile and `SSH_AUTH_SOCK` into the existing profile and environment objects. Replace `USERNAME` with your Windows account name:
 
 ```json
 "terminal.integrated.profiles.windows": {
@@ -282,14 +361,14 @@ If `XDG_CONFIG_HOME` is set, it must be an absolute path and the GUI reads TOML 
 On Windows and Linux, use `--config FILE` to select another file; command-line values override file values. On macOS, open or save configuration files through the GUI's File menu. The following environment variables also affect endpoint paths:
 
 - `SSH_KEYSELECT_LISTEN` overrides `agent.listen`.
-- When `agent.upstream` is empty, `UPSTREAM_SSH_AUTH_SOCK` takes precedence over `SSH_AUTH_SOCK`.
+- When `agent.upstream` is empty, `UPSTREAM_SSH_AUTH_SOCK` takes precedence over `SSH_AUTH_SOCK`. If neither is set, the GUI uses the native OpenSSH agent endpoint: `\\.\pipe\openssh-ssh-agent` on Windows and `~/.ssh/ssh-agent.sock` on macOS and Linux.
 - To keep the upstream endpoint tied to a changing environment variable, set `agent.upstream = "env:SSH_AUTH_SOCK"`, or choose Environment variable in GUI Settings and enter its name. The GUI resolves this reference at startup and when Settings are applied, while saving the `env:NAME` reference in the config file. The variable must be set and non-empty.
 - Environment variables in ordinary paths and a leading `~` are expanded using the GUI process environment.
-- If the configured Listen endpoint is already active or blocked by a non-socket file, the GUI starts with the proxy `Not configured`. Unix stale sockets owned by the current user can be reclaimed when the proxy starts.
+- If the configured Listen endpoint is already active or blocked by a non-socket file, the GUI starts with the proxy `Not configured`.
 
 The configuration loader rejects unknown keys. Logging is off by default. Set `log.level` to enable it and optionally set `log.file` to append logs to a file. When `log.file` is empty, logs go to standard error.
 
-The key selection timeout defaults to 120 seconds. In GUI Settings, set `agent.selection_timeout`; for `ssh-keyselect ssh`, pass `--selection-timeout SECONDS`. The timeout starts after the available identities are retrieved and before the selector queue is entered. Waiting behind another open picker counts toward the timeout, so the GUI countdown can start below the configured value or a request can expire before its picker appears.
+The key selection timeout defaults to 120 seconds. In GUI Settings, set `agent.selection_timeout`; for `ssh-keyselect ssh`, pass `--selection-timeout SECONDS`.
 
 If, after a timeout, the SSH client prints the errors below and the server's `/var/log/secure` contains `penalty: exceeded LoginGraceTime`, set the Key selection Timeout to match that server's `LoginGraceTime` value in seconds.
 
@@ -302,9 +381,9 @@ Example configuration for `Git Bash` on Windows, using a Cygwin-compatible liste
 
 ```toml
 [agent]
-# Replace alice with your Windows user name:
-upstream = 'C:\Users\alice\.ssh\ssh-upstream-agent.sock'
-listen = 'C:\Users\alice\.ssh\ssh-keyselect-agent.sock'
+# Replace USERNAME with your Windows user name:
+upstream = 'C:\Users\USERNAME\.ssh\ssh-upstream-agent.sock'
+listen = 'C:\Users\USERNAME\.ssh\ssh-keyselect-agent.sock'
 
 # macOS and Linux:
 # upstream = "$SSH_AUTH_SOCK"
@@ -323,25 +402,6 @@ level = "off"
 [gui]
 theme = "light" # "light" or "dark"
 ```
-
-### Cross-shell setup
-
-When using Git Bash with endpoints from different environments, set the modes explicitly:
-
-```bash
-ssh-keyselect-gui --upstream-mode cygwin --listen-mode cygwin --upstream ~/.ssh/ssh-upstream-agent.sock &
-export SSH_AUTH_SOCK="$HOME/.ssh/ssh-keyselect-agent.sock"
-ssh user@example.org
-```
-
-### GUI controls
-
-- Open Settings from the Settings button or File > Settings. In Upstream, choose Socket path for a fixed endpoint or Environment variable to follow a variable such as `SSH_AUTH_SOCK`; enter the variable name in the field. Selecting Environment variable chooses `UPSTREAM_SSH_AUTH_SOCK` when it is non-empty in the GUI process environment, otherwise `SSH_AUTH_SOCK` when non-empty, otherwise `UPSTREAM_SSH_AUTH_SOCK`. The `Allow signing after upstream rejects session binding (Required for 1Password)` option retries signing without the upstream session binding. This may bypass restrictions enforced by the upstream agent and is off by default. In Theme, choose Light or Dark; the Dark theme uses charcoal surfaces and blue accents. In Key selection, set how many seconds a key request can wait for a choice (default 120); the picker shows a live countdown. If it reaches zero, the expired dialog stays open until dismissed, and its key choice is no longer available. In Logging, set the log level and optional log file. Leaving the file empty writes logs to standard error.
-- Apply activates theme, endpoint, and logging changes. Use File > Save to store them in the TOML configuration.
-- When no upstream source is configured and `UPSTREAM_SSH_AUTH_SOCK` and `SSH_AUTH_SOCK` are unset, the GUI uses `\\.\pipe\openssh-ssh-agent` on Windows and `~/.ssh/ssh-agent.sock` on macOS and Linux. Changing Upstream Mode resets a fixed Socket path to the selected mode's default endpoint.
-- The File menu's document actions are New, Open, Save, and Save As. Their shortcuts are Ctrl+N, Ctrl+O, Ctrl+S, and Ctrl+Shift+S; use Command instead of Ctrl on macOS. New resets the active settings to their defaults, including endpoint values from the environment, and opens Settings. The first Save on a new configuration writes to the default config file if it does not exist; if it already exists, Save opens Save As so it is not replaced. New, Open, and closing the window prompt before discarding unsaved changes.
-- On macOS, minimizing the main window hides it from the Dock while keeping the menu bar icon available. Click the icon to show the window again.
-- About shows the application version and third-party library license inventory. Full license notices are included in `CREDITS`.
 
 ### Auto Select
 

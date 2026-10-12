@@ -185,7 +185,7 @@ Each frontend connection accepts at most 16 session-binding requests and retains
 
 Unix listener cleanup unlinks only the socket it created, after checking filesystem identity. Automatic unlinking on listener close is disabled so a replacement at the same path remains untouched.
 
-Before replacing a stale Unix socket, the listener checks that the socket belongs to the effective user and rechecks its filesystem identity after the connection probe. Bind and permission failures also remove the path only when it still names the socket created by that listener.
+Before replacing a stale Unix socket, the listener treats only `ECONNREFUSED` and `ENOENT` from the connection probe as stale, checks that the socket belongs to the effective user, and rechecks its filesystem identity before removal. Active sockets, non-socket entries, sockets owned by another user, and paths with an inconclusive probe are left untouched. Bind and permission failures also remove the path only when it still names the socket created by that listener.
 
 Unix TUI endpoints use `XDG_RUNTIME_DIR/ssh-keyselect` when configured, or `os.TempDir()/ssh-keyselect-<effective UID>` otherwise. The XDG directory and the private directory must belong to the effective UID. The private directory is opened without following a symlink; ownership is checked before permissions are set to `0700` through the directory descriptor. This separates users in a shared temporary directory and avoids changing another user's directory permissions.
 
@@ -215,7 +215,7 @@ At GUI startup and for New, an unset upstream resolves from `UPSTREAM_SSH_AUTH_S
 
 The event loop stays available to finish cancelled picker tasks while server handlers drain. MyGo's `OnWillQuit` handler stops the selector, cancels the application context, and waits for server shutdown and owned socket cleanup before returning. Closing the native picker releases its waiting agent request so shutdown can finish while the UI loop is active.
 
-At GUI startup, an existing filesystem entry at the resolved Listen path leaves the proxy unconfigured. The preflight check prevents the listener from removing or replacing an existing socket file.
+At GUI startup, an active socket, non-socket filesystem entry, socket not owned by the effective user, or inconclusive stale-socket probe leaves the proxy unconfigured. An owned stale socket can proceed to the listener's ownership and identity checks for safe reclamation.
 
 ### GUI rendering and memory
 

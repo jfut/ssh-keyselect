@@ -26,22 +26,30 @@ import (
 	"github.com/jfut/ssh-keyselect/internal/upstream"
 )
 
-// resolveGUIListen chooses a frontend endpoint without requiring an upstream agent.
+// resolveGUIListen chooses a frontend endpoint after resolving the configured upstream.
 func resolveGUIListen(cfg config.Config) (string, transport.Mode, error) {
-	cfg.Agent.Upstream = config.ExpandPath(cfg.Agent.Upstream)
+	upstreamPath, err := config.ResolveUpstream(cfg.Agent.Upstream)
+	if err != nil {
+		return "", "", err
+	}
+	return resolveGUIListenWithUpstream(cfg, upstreamPath)
+}
+
+// resolveGUIListenWithUpstream chooses a frontend endpoint using a resolved upstream path.
+func resolveGUIListenWithUpstream(cfg config.Config, upstreamPath string) (string, transport.Mode, error) {
 	path := config.ExpandPath(cfg.Agent.Listen)
 	var mode transport.Mode
 	var err error
 	if path == "" {
-		path, mode, err = guiDefaultListenEndpoint(cfg.Agent.Upstream, cfg.Agent.ListenMode)
+		path, mode, err = guiDefaultListenEndpoint(upstreamPath, cfg.Agent.ListenMode)
 	} else {
-		mode, err = listener.ResolveMode(path, cfg.Agent.Upstream, cfg.Agent.ListenMode)
+		mode, err = listener.ResolveMode(path, upstreamPath, cfg.Agent.ListenMode)
 	}
 	if err != nil {
 		return "", "", err
 	}
 	path = guiNormalizeListenPathForMode(path, mode)
-	if transport.SameEndpoint(path, cfg.Agent.Upstream) {
+	if transport.SameEndpoint(path, upstreamPath) {
 		return "", "", errors.New("listen and upstream endpoints must be different")
 	}
 	return path, mode, nil
@@ -118,6 +126,10 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 	if err := cfg.Validate(); err != nil {
 		return "", "", err
 	}
+	upstreamPath, err := config.ResolveUpstream(cfg.Agent.Upstream)
+	if err != nil {
+		return "", "", err
+	}
 	cfg.Log.File = config.ExpandPath(cfg.Log.File)
 	logFileChanged := r.currentLogFile != cfg.Log.File
 	var preparedLogFile *os.File
@@ -137,7 +149,7 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 		}
 	}()
 	applyAgentSettings := func() {
-		r.agent.Set(upstream.EndpointAgent{Path: cfg.Agent.Upstream, Mode: cfg.Agent.UpstreamMode})
+		r.agent.Set(upstream.EndpointAgent{Path: upstreamPath, Mode: cfg.Agent.UpstreamMode})
 		r.server.SetSelectionTimeout(time.Duration(cfg.Agent.SelectionTimeout) * time.Second)
 		r.server.SetAllowUnboundSigningOnBindFailure(cfg.Agent.AllowUnboundSigningOnBindFailure)
 		if logFileChanged {
@@ -155,8 +167,7 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 			r.currentLogLevel = cfg.Log.Level
 		}
 	}
-	cfg.Agent.Upstream = config.ExpandPath(cfg.Agent.Upstream)
-	path, mode, err := resolveGUIListen(cfg)
+	path, mode, err := resolveGUIListenWithUpstream(cfg, upstreamPath)
 	if err != nil {
 		return "", "", err
 	}

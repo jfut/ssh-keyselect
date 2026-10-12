@@ -92,10 +92,47 @@ func (a *guiApp) saveCurrentConfig() error {
 	return nil
 }
 
-// saveCurrentConfigWithCompletion saves an untitled configuration through Save As.
+// guiDefaultConfigPathIfAbsent returns the default path when saving there cannot replace an entry.
+func guiDefaultConfigPathIfAbsent() (string, error) {
+	defaultPath, err := config.DefaultPath()
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Lstat(defaultPath); err == nil {
+		return "", nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect default config file: %w", err)
+	}
+	return defaultPath, nil
+}
+
+// saveCurrentConfigWithCompletion saves an untitled configuration to the default path when free.
 func (a *guiApp) saveCurrentConfigWithCompletion(complete func(bool, error)) {
 	if a.configPath == "" {
-		a.saveAsConfigurationWithCompletion(complete)
+		defaultPath, err := guiDefaultConfigPathIfAbsent()
+		if err != nil {
+			if complete != nil {
+				complete(false, err)
+			}
+			return
+		}
+		if defaultPath == "" {
+			a.saveAsConfigurationWithCompletion(complete)
+			return
+		}
+		if err := config.Save(defaultPath, guiConfigForDisk(a.cfg)); err != nil {
+			if complete != nil {
+				complete(false, err)
+			}
+			return
+		}
+		a.configPath = defaultPath
+		a.dirty = false
+		a.statusMessage = ""
+		a.updateWindowTitle()
+		if complete != nil {
+			complete(true, nil)
+		}
 		return
 	}
 	err := a.saveCurrentConfig()
@@ -231,10 +268,17 @@ func (a *guiApp) openConfiguration() {
 			if result.Button == 2 {
 				savePath := currentPath
 				if savePath == "" {
-					savePath, err = guiChooseConfigToSave(parent, "")
+					savePath, err = guiDefaultConfigPathIfAbsent()
 					if err != nil {
 						mygo.Dialog.Error("Could not save configuration.", err.Error())
 						return
+					}
+					if savePath == "" {
+						savePath, err = guiChooseConfigToSave(parent, "")
+						if err != nil {
+							mygo.Dialog.Error("Could not save configuration.", err.Error())
+							return
+						}
 					}
 					if savePath == "" {
 						return
@@ -323,18 +367,16 @@ func (a *guiApp) saveConfigurationFromMenu() {
 	if a.applying {
 		return
 	}
-	if a.configPath == "" {
-		a.saveAsConfiguration()
-		return
-	}
-	if err := a.saveCurrentConfig(); err != nil {
-		a.statusMessage = "Could not save configuration: " + err.Error()
-	} else {
-		a.statusMessage = ""
-	}
-	if a.window != nil {
-		a.window.Invalidate()
-	}
+	a.saveCurrentConfigWithCompletion(func(saved bool, err error) {
+		if err != nil {
+			a.statusMessage = "Could not save configuration: " + err.Error()
+		} else if saved {
+			a.statusMessage = ""
+		}
+		if a.window != nil {
+			a.window.Invalidate()
+		}
+	})
 }
 
 func (a *guiApp) applicationMenu() *mygo.Menu {
@@ -467,20 +509,11 @@ func guiChooseConfigToSave(parent *mygo.Window, currentPath string) (string, err
 
 // guiDefaultConfigDirectory chooses the standard per-user folder for a new config file.
 func guiDefaultConfigDirectory() (string, error) {
-	var directory string
-	if runtime.GOOS == "windows" {
-		base, err := os.UserConfigDir()
-		if err != nil {
-			return "", fmt.Errorf("locate user config directory: %w", err)
-		}
-		directory = filepath.Join(base, "ssh-keyselect")
-	} else {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("locate user home directory: %w", err)
-		}
-		directory = filepath.Join(home, ".config", "ssh-keyselect")
+	defaultPath, err := config.DefaultPath()
+	if err != nil {
+		return "", err
 	}
+	directory := filepath.Dir(defaultPath)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return "", fmt.Errorf("create default config directory: %w", err)
 	}

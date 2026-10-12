@@ -85,18 +85,19 @@ func (a *guiApp) start() {
 
 func (a *guiApp) createMainWindow() {
 	// Keep five full key rows visible with only a small strip of the sixth row.
-	width, height, minHeight := 920, 410, 380
+	// The compact badge saves 12 DIPs; the reference window is another 44 DIPs narrower.
+	width, height, minWidth, minHeight := 870, 410, 435, 205
 	switch runtime.GOOS {
 	case "darwin":
-		height, minHeight = 357, 327
+		height = 357
 	case "linux":
-		height, minHeight = 347, 317
+		height = 347
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title:     guiMainWindowTitle(guiDisplayEndpointPath(a.actualListen), a.dirty),
 		Width:     width,
 		Height:    height,
-		MinWidth:  850,
+		MinWidth:  minWidth,
 		MinHeight: minHeight,
 		Content:   ui.View(a.view),
 	})
@@ -226,7 +227,8 @@ func (a *guiApp) applicationMenuBar(c *ui.Context, theme *ui.Theme) {
 	if theme.Dark {
 		barColor = ui.Hex("#181818")
 	}
-	ui.Row(c).FillWidth().Gap(theme.Space(1)).AlignItems(ui.Center).
+	// Let the negative side margins expand the stretched row to both window edges.
+	ui.Row(c).Gap(theme.Space(1)).AlignItems(ui.Center).
 		Margin(-theme.Space(3), -theme.Space(3), 0, -theme.Space(3)).
 		Padding(0, 0, theme.Space(1), 0).Background(barColor).
 		BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Role(ui.RoleMenuBar).Label("Application menu").Children(func() {
@@ -481,15 +483,16 @@ func (a *guiApp) endpointRow(c *ui.Context, theme *ui.Theme, title, variable str
 			pathToCopy := guiEndpointPathFromDisplay(displayPath)
 			mygo.Clipboard.WriteText(guiEndpointExportCommand(variable, pathToCopy))
 		}
-		badge := ui.Row(c).Width(theme.Space(72)).Height(controlHeight).Padding(theme.Space(1.5), theme.Space(2)).
+		label := "Not configured"
+		if endpoint != "" && modeErr != nil {
+			label = "Unavailable"
+		} else if endpoint != "" {
+			label = guiDisplayModeName(mode)
+		}
+		// Keep mode badges aligned; the longest Windows mode label sets their shared width.
+		badge := ui.Row(c).Width(theme.Space(68)).Height(controlHeight).Padding(theme.Space(1.5), theme.Space(2)).
 			Background(modeFill).Radius(theme.Space(1)).AlignItems(ui.Center)
 		badge.Children(func() {
-			label := "Not configured"
-			if endpoint != "" && modeErr != nil {
-				label = "Unavailable"
-			} else if endpoint != "" {
-				label = guiDisplayModeName(mode)
-			}
 			ui.Text(c, label).FontSize(theme.Rem(0.92)).TextColor(modeInk).SingleLine().Tooltip(modeErrString(modeErr))
 		})
 	})

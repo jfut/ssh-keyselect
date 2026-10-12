@@ -40,7 +40,7 @@ func guiDialogActionRow(c *ui.Context, theme *ui.Theme, justify ui.Align, childr
 	return row
 }
 
-// guiDialogActionFooter centers its actions in the remaining vertical space.
+// guiDialogActionFooter balances the space above and below its actions.
 func guiDialogActionFooter(c *ui.Context, theme *ui.Theme, children func()) ui.Element {
 	footer := ui.Column(c).Grow(1).Center()
 	footer.Children(func() { guiDialogActionRow(c, theme, ui.End, children) })

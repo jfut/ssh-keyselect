@@ -538,10 +538,10 @@ func (a *guiApp) openSettings() {
 	height, minHeight := 550, 550
 	switch runtime.GOOS {
 	case "darwin":
-		// Leave rounded-edge clearance without adding excess space around the actions.
-		height, minHeight = 510, 510
+		// Match the Windows action spacing while preserving clearance around rounded sheet corners.
+		height, minHeight = 504, 504
 	case "linux":
-		height, minHeight = 490, 490
+		height, minHeight = 484, 484
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: "Settings", Parent: a.window, Modal: true,
@@ -973,6 +973,9 @@ func (s *guiSettingsState) browse(upstream bool) {
 
 func guiTransportModeOptions(includeAuto bool) []string {
 	modes := []transport.Mode{transport.Cygwin, transport.NamedPipe, transport.Unix, transport.WSL1}
+	if runtime.GOOS != "windows" {
+		modes = []transport.Mode{transport.Cygwin, transport.Unix, transport.WSL1}
+	}
 	options := make([]string, 0, len(modes)+1)
 	if includeAuto {
 		options = append(options, guiDisplayModeName(transport.Auto))

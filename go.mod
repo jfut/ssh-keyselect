@@ -9,7 +9,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.3
 	github.com/alecthomas/kong v1.16.1
 	github.com/ebitengine/purego v0.11.1
-	github.com/egoist/mygo v0.3.7
+	github.com/egoist/mygo v0.4.8
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
 	golang.org/x/sys v0.49.0

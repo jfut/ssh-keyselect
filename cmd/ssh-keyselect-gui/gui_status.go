@@ -705,8 +705,9 @@ func (a *guiApp) showAbout() {
 				})
 				ui.Column(c).Gap(theme.Space(0.35)).Children(func() {
 					ui.Textf(c, "Version: %s (%s)", version, commit).FontSize(theme.Rem(0.92)).Selectable()
-					ui.Text(c, "Project URL: "+branding.ProjectURL).FontSize(theme.Rem(0.92)).Selectable()
 					ui.Text(c, "Author: "+branding.Author).FontSize(theme.Rem(0.92)).Selectable()
+					ui.Text(c, "License: Apache-2.0").FontSize(theme.Rem(0.92)).Selectable()
+					ui.Text(c, "Project URL: "+branding.ProjectURL).FontSize(theme.Rem(0.92)).Selectable()
 				})
 				ui.Text(c, "Third-party libraries and licenses").FontSize(theme.Rem(0.82)).
 					Margin(theme.Space(1), 0, 0, 0)
@@ -744,8 +745,9 @@ func guiAboutCopyText() string {
 		branding.Name,
 		branding.Subtitle,
 		fmt.Sprintf("Version: %s (%s)", version, commit),
-		"Project URL: " + branding.ProjectURL,
 		"Author: " + branding.Author,
+		"License: Apache-2.0",
+		"Project URL: " + branding.ProjectURL,
 		"Third-party libraries and licenses",
 		strings.TrimSpace(credits.DependencyList),
 		"Full license texts are included in CREDITS.",

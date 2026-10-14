@@ -127,9 +127,9 @@ archives:
       - goos: windows
         formats: ["zip"]
     name_template: >-
-      {{ .ProjectName }}_
-      {{- .Version }}_
-      {{- .Os }}_
+      {{ .ProjectName }}-
+      {{- .Version }}-
+      {{- .Os }}-
       {{- if eq .Arch "amd64" }}x86_64
       {{- else }}{{ .Arch }}{{ end }}
     builds_info:
@@ -142,11 +142,11 @@ archives:
   - id: macos-app
     ids:
       - ssh-keyselect-macos
-    formats: ["tar.gz"]
+    formats: ["zip"]
     name_template: >-
-      {{ .ProjectName }}_
-      {{- .Version }}_
-      {{- .Os }}_
+      {{ .ProjectName }}-
+      {{- .Version }}-
+      {{- .Os }}-
       {{- if eq .Arch "amd64" }}x86_64
       {{- else }}{{ .Arch }}{{ end }}
     builds_info:
@@ -199,6 +199,15 @@ nfpms:
       - rpm
       - termux.deb
       - archlinux
+    # Alpine embeds the revision in its package version and uses a distinct filename convention.
+    overrides:
+      apk:
+        release: 0
+        file_name_template: >-
+          {{ .PackageName }}-{{ .Version }}-r{{ .Release }}.
+          {{- if eq .Arch "amd64" }}x86_64
+          {{- else if eq .Arch "arm64" }}aarch64
+          {{- else }}{{ .Arch }}{{ end }}.apk
     rpm:
       signature:
         key_file: '{{ with index .Env "GPG_KEY_PATH" }}{{ . }}{{ end }}'

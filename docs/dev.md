@@ -307,18 +307,28 @@ The scanner reports GUI-tagged and platform-specific imports in each build. Chec
 
 The build commands have these effects:
 
-- `just clean` removes `dist/`, generated platform assets, and temporary Windows resource copies in the command directories.
+- `just clean` removes `dist/`, `release-packages/`, generated platform assets, and temporary Windows resource copies in the command directories.
 - `just build` creates local binaries and generated platform assets.
-- `just snapshot` builds a local GoReleaser snapshot.
-- `just release` runs GoReleaser without publishing.
+- `just snapshot` builds GoReleaser snapshot artifacts, Windows MSI installers, and a macOS DMG when run on macOS.
+- `just release` builds release artifacts, Windows MSI installers, and a macOS DMG when run on macOS without publishing.
+- `bash scripts/build-windows-msi.sh vX.Y.Z` creates per-machine MSI installers for amd64 and arm64 on Linux, macOS, or Windows. `bash scripts/build-mygo-packages.sh macos vX.Y.Z` creates the universal DMG.
+- Snapshot package versions follow the GoReleaser template by incrementing the latest tag's patch number and appending `-next`; release package versions use the latest tag without its `v` prefix.
 
-Linux and Windows release archives contain both executables, `LICENSE`, and `CREDITS`. macOS archives contain the CLI executable, `SSH KeySelect.app`, `LICENSE`, and `CREDITS`; they omit the standalone GUI executable. Linux packages install the license files under `/usr/share/doc/ssh-keyselect` and install the GUI desktop entry and PNG icons.
+MSI ProductVersion uses three numeric fields, so the `-next` suffix is omitted from the installed MSI version while the package filename and GUI version retain it. The MSI upgrade rules allow the same numeric version so a local snapshot can be replaced by its matching release.
 
-The macOS GUI post-build hook creates `SSH KeySelect.app` for Finder launches. Separate Darwin build IDs let the macOS archive contain the CLI and app bundle without the standalone GUI executable. The bundle contains the GUI executable and icon. The current release workflow does not sign macOS artifacts with a Developer ID or notarize them, so Gatekeeper may block an app downloaded from a release. Windows release binaries embed their icon; the GUI executable uses the GUI subsystem.
+The MSI Summary Information uses the standard `Installation Database` title, the product name as its subject, `Installer` as its keyword, and `go-msi` as the creating application. Creation and save timestamps use the build time in UTC; `SOURCE_DATE_EPOCH` can provide a fixed timestamp for reproducible builds.
+
+Linux and Windows release archives contain both executables, `LICENSE`, and `CREDITS`. macOS archives contain the CLI executable, `SSH KeySelect.app`, `LICENSE`, and `CREDITS`; they omit the standalone GUI executable. Linux packages install the license files under `/usr/share/doc/ssh-keyselect` and install the GUI desktop entry and PNG icons. The Windows MSI installers contain both executables and the license notices, add a Start menu shortcut, and install for all users. MyGo builds the universal macOS DMG containing the GUI app.
+
+GoReleaser builds the release archives and Linux packages. [`go-msi`](https://github.com/digitalxero/go-msi) builds the Windows MSI installers from the CLI and GUI executables, and MyGo builds the macOS DMG from `mygo.json`; the build script replaces the app bundle and DMG volume icons with the project-generated ICNS so Finder renders its small icon sizes correctly. Package versions come from the current release tag or the matching snapshot version. Both Windows executables include their version resources, and the GUI executable includes the app icon. The MSI includes the `LICENSE` and `CREDITS` files.
+
+The macOS GUI post-build hook still creates `SSH KeySelect.app` for the GoReleaser archive. Separate Darwin build IDs let that archive contain the CLI and app bundle without the standalone GUI executable. The MyGo DMG contains the same app as a universal binary. Neither macOS package is signed with a Developer ID or notarized, so Gatekeeper may block apps downloaded from a release. The Windows archive executables remain GoReleaser builds; the MSI installer packages both executables.
+
+The MSI installs for all users. Its default location is `C:\Program Files\SSH KeySelect`, which the user can change in the installer with its standard folder browser. `ALLUSERS=1` selects the per-machine context, and the Summary Information Word Count clears the no-elevation-required bit so Windows Installer requests UAC approval when installation begins.
 
 ### Publishing
 
-The [release workflow](../.github/workflows/release.yaml) runs automatically when a `v*` tag is pushed. GitHub Actions checks out the tagged source, generates platform resources and third-party credits, then uses GoReleaser to build and publish the artifacts. Public [workflow runs](https://github.com/jfut/ssh-keyselect/actions/workflows/release.yaml) and [Releases](https://github.com/jfut/ssh-keyselect/releases) provide build and release history.
+The [release workflow](../.github/workflows/release.yaml) runs automatically when a `v*` tag is pushed. Separate GitHub Actions jobs build the MSI installers and DMG and pass them to the final job as workflow artifacts. GoReleaser adds them to `checksums.txt` and publishes them with the archives and packages in one release. This keeps all assets in the same release publication, which is required because published GitHub Releases are immutable. Public [workflow runs](https://github.com/jfut/ssh-keyselect/actions/workflows/release.yaml) and [Releases](https://github.com/jfut/ssh-keyselect/releases) provide build and release history.
 
 Published releases use GitHub's [immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases). After publication, attached assets cannot be added, replaced, or deleted, and the associated tag is locked to its commit while the release exists.
 

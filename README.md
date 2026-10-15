@@ -113,29 +113,34 @@ SSH KeySelect does not install a background service or enable automatic startup.
 
 ### Windows
 
-1. Download a Windows archive from [Releases](https://github.com/jfut/ssh-keyselect/releases). It includes `ssh-keyselect.exe` for terminal use and `ssh-keyselect-gui.exe`.
-2. Extract it into a directory you control.
-3. Add the executable directory to `PATH` to run the CLI.
+1. From [Releases](https://github.com/jfut/ssh-keyselect/releases), download the `SSH-KeySelect-Setup-<version>-<architecture>.msi` installer or a Windows archive. The MSI installs `ssh-keyselect.exe` and the GUI app for all users under `C:\Program Files\SSH KeySelect` by default, lets you choose another folder with Browse, and requests administrator approval through UAC. The archive includes both executables too.
+2. Verify the downloaded file against `checksums.txt`.
+3. To use the CLI from the MSI, run it from the installation folder or add that folder to `PATH`. For an archive install, extract it into a directory you control and add that directory to `PATH`.
 
-Windows release executables are currently unsigned. See the [Code signing policy](#code-signing-policy) for the current status.
+Windows release executables and installers are currently unsigned. See the [Code signing policy](#code-signing-policy) for the current status.
 
 ### macOS
 
-1. Download a macOS archive from [Releases](https://github.com/jfut/ssh-keyselect/releases). It includes `ssh-keyselect` for terminal use and `SSH KeySelect.app` for Finder.
-2. Extract it into a directory you control.
-3. Verify the official archive against `checksums.txt`.
-4. Add the executable directory to `PATH` to run the CLI.
-5. After following the note below, launch `SSH KeySelect.app` from Finder or move it to your Applications folder.
+1. From [Releases](https://github.com/jfut/ssh-keyselect/releases), download `SSH KeySelect <version>.dmg` for the universal GUI app, or a macOS archive if you also need the `ssh-keyselect` CLI.
+2. Verify the downloaded file against `checksums.txt`.
+3. For the DMG, drag `SSH KeySelect.app` to Applications. For the archive, extract it into a directory you control and add that directory to `PATH` to run the CLI.
+4. Follow the note below before opening the app or CLI.
 
 > [!CAUTION]
-> The macOS app and CLI are not signed with a Developer ID or notarized, so Gatekeeper may block them after download. After extracting the archive and verifying its checksum, run these commands from the extracted directory before opening the app or CLI:
+> The macOS app and CLI are not signed with a Developer ID or notarized, so Gatekeeper may block them after download. After verifying the DMG, moving its app to Applications, and opening the disk image, remove the quarantine attribute from the installed app:
+>
+> ```sh
+> xattr -dr com.apple.quarantine "/Applications/SSH KeySelect.app"
+> ```
+>
+> For the archive, run these commands from the extracted directory:
 >
 > ```sh
 > xattr -dr com.apple.quarantine "SSH KeySelect.app"
 > xattr -dr com.apple.quarantine ssh-keyselect
 > ```
 >
-> These commands remove the download quarantine attribute; they do not add a trusted code signature. Once Developer ID signing and notarization are enabled, you can skip them but should continue verifying the archive checksum. See the [Code signing policy](#code-signing-policy) for the current status.
+> These commands remove the download quarantine attribute; they do not add a trusted code signature. Once Developer ID signing and notarization are enabled, you can skip them but should continue verifying downloads. See the [Code signing policy](#code-signing-policy) for the current status.
 
 ### Linux
 

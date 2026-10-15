@@ -54,6 +54,7 @@ func (b *guiDiagnostics) String() string {
 func main() { os.Exit(execute(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func execute(args []string, stdout, stderr io.Writer) int {
+	resolvePackagedVersion()
 	if len(args) > 0 && (args[0] == "--version" || args[0] == "-V" || args[0] == "version") {
 		_, _ = fmt.Fprintf(stdout, "ssh-keyselect-gui %s (%s)\n", version, commit)
 		return 0

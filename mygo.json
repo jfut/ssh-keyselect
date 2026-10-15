@@ -1,0 +1,18 @@
+{
+  "name": "SSH KeySelect",
+  "identifier": "jp.integ.ssh-keyselect-gui",
+  "version": "0.0.0",
+  "copyright": "Copyright contributors to the ssh-keyselect project",
+  "icon": "assets/ssh-keyselect-logo.png",
+  "main": "./cmd/ssh-keyselect-gui",
+  "out": "dist/mygo",
+  "resources": [
+    "LICENSE",
+    "CREDITS"
+  ],
+  "macos": {
+    "infoPlist": {
+      "LSUIElement": true
+    }
+  }
+}

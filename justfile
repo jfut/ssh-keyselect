@@ -13,7 +13,7 @@ default:
 #
 
 clean:
-	rm -rf dist CREDITS assets/gui/generated
+	rm -rf dist release-packages CREDITS assets/gui/generated
 	bash scripts/windows-icon-resources.sh clean
 	mkdir -p dist
 
@@ -97,7 +97,11 @@ run *ARGS: build
 #
 
 snapshot: deps gen-windows-icons deps-credits-if-missing
+    bash scripts/build-windows-msi.sh "$(bash scripts/mygo-version.sh snapshot)"
+    if [ "$(go env GOHOSTOS)" = darwin ]; then bash scripts/build-mygo-packages.sh macos "$(bash scripts/mygo-version.sh snapshot)"; fi
     bash scripts/windows-icon-resources.sh with goreleaser release --skip=publish --clean --snapshot
 
 release: deps gen-windows-icons deps-credits
+    bash scripts/build-windows-msi.sh "$(bash scripts/mygo-version.sh release)"
+    if [ "$(go env GOHOSTOS)" = darwin ]; then bash scripts/build-mygo-packages.sh macos "$(bash scripts/mygo-version.sh release)"; fi
     bash scripts/windows-icon-resources.sh with goreleaser release --skip=publish --clean --skip=validate

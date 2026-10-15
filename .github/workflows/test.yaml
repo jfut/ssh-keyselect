@@ -28,7 +28,7 @@ permissions: {}
 jobs:
   test:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 25
     permissions:
       contents: read
 
@@ -44,6 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Go
@@ -55,13 +56,6 @@ jobs:
       - name: Download modules
         run: go mod download
 
-      - name: Install OpenSSH server for integration coverage
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y openssh-server
-
-      - name: Run tests
-        run: go test ./...
-
       - name: Generate credits if missing
         shell: bash
         run: |
@@ -69,5 +63,58 @@ jobs:
             bash scripts/generate-credits.sh
           fi
 
+      - name: Generate platform icons and Windows resources
+        shell: bash
+        run: |
+          go run ./scripts/generate-platform-icons.go
+          bash scripts/generate-windows-icons.sh
+
+      - name: Build CLI and GUI executables
+        id: build
+        shell: bash
+        run: |
+          mkdir -p dist ci-artifacts
+          exe_suffix="$(go env GOEXE)"
+          bash scripts/windows-icon-resources.sh with env CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "dist/ssh-keyselect${exe_suffix}" ./cmd/ssh-keyselect
+          if [ "$(go env GOOS)" = windows ]; then
+            bash scripts/windows-icon-resources.sh with env CGO_ENABLED=0 go build -trimpath -tags gui -ldflags "-s -w -H windowsgui" -o "dist/ssh-keyselect-gui${exe_suffix}" ./cmd/ssh-keyselect-gui
+          else
+            bash scripts/windows-icon-resources.sh with env CGO_ENABLED=0 go build -trimpath -tags gui -ldflags "-s -w" -o "dist/ssh-keyselect-gui${exe_suffix}" ./cmd/ssh-keyselect-gui
+          fi
+          cp "dist/ssh-keyselect${exe_suffix}" "dist/ssh-keyselect-gui${exe_suffix}" ci-artifacts/
+
+      - name: Install OpenSSH server for integration coverage
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y openssh-server
+
+      - name: Run tests
+        run: go test ./...
+
       - name: Run GUI build-tag tests
         run: go test -tags gui ./cmd/ssh-keyselect-gui ./internal/selector
+
+      - name: Build macOS DMG or Windows MSI installers
+        id: packages
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (runner.os == 'macOS' || runner.os == 'Windows') }}
+        shell: bash
+        run: |
+          version="$(bash scripts/mygo-version.sh snapshot)"
+          case "$(go env GOOS)" in
+            darwin)
+              bash scripts/build-mygo-packages.sh macos "$version"
+              cp release-packages/macos/*.dmg ci-artifacts/
+              ;;
+            windows)
+              bash scripts/build-windows-msi.sh "$version"
+              cp release-packages/windows/*.msi ci-artifacts/
+              ;;
+          esac
+
+      - name: Upload build artifacts
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (runner.os == 'Linux' || steps.packages.outcome == 'success') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-build-${{ matrix.os }}
+          path: ci-artifacts/*
+          if-no-files-found: error
+          retention-days: 14

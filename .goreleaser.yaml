@@ -173,6 +173,12 @@ changelog:
 
 checksum:
   name_template: "checksums.txt"
+  extra_files:
+    - glob: release-packages/*/*
+
+release:
+  extra_files:
+    - glob: release-packages/*/*
 
 nfpms:
   - id: ssh-keyselect

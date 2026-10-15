@@ -369,7 +369,7 @@ On Windows and Linux, use `--config FILE` to select another file; command-line v
 - When `agent.upstream` is empty, `UPSTREAM_SSH_AUTH_SOCK` takes precedence over `SSH_AUTH_SOCK`. If neither is set, the GUI uses the native OpenSSH agent endpoint: `\\.\pipe\openssh-ssh-agent` on Windows and `~/.ssh/ssh-agent.sock` on macOS and Linux.
 - To keep the upstream endpoint tied to a changing environment variable, set `agent.upstream = "env:SSH_AUTH_SOCK"`, or choose Environment variable in GUI Settings and enter its name. The GUI resolves this reference at startup and when Settings are applied, while saving the `env:NAME` reference in the config file. The variable must be set and non-empty.
 - Environment variables in ordinary paths and a leading `~` are expanded using the GUI process environment.
-- If the configured Listen endpoint is already active or blocked by a non-socket file, the GUI starts with the proxy `Not configured`.
+- If the configured Listen endpoint is active or blocked by a non-socket file, the GUI starts with the proxy `Not configured`. A stale socket owned by the current user is replaced when KeySelect confirms that it is no longer listening.
 
 The configuration loader rejects unknown keys. Logging is off by default. Set `log.level` to enable it and optionally set `log.file` to append logs to a file. When `log.file` is empty, logs go to standard error.
 

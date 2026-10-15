@@ -1067,7 +1067,9 @@ func (s *guiSettingsState) apply() {
 		activeUpstream, _ := s.app.endpointAgent.Snapshot()
 		unchanged = unchanged && activeUpstream.Path == resolvedUpstream
 	}
-	if unchanged {
+	// An unchanged Apply must retry a listener that was unavailable at startup.
+	retryUnavailableListen := s.app.actualListen == ""
+	if unchanged && !retryUnavailableListen {
 		guiCloseWindowAfterFrame(s.window)
 		return
 	}

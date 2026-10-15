@@ -215,7 +215,7 @@ At GUI startup and for New, an unset upstream resolves from `UPSTREAM_SSH_AUTH_S
 
 The event loop stays available to finish cancelled picker tasks while server handlers drain. MyGo's `OnWillQuit` handler stops the selector, cancels the application context, and waits for server shutdown and owned socket cleanup before returning. Closing the native picker releases its waiting agent request so shutdown can finish while the UI loop is active.
 
-At GUI startup, an active socket, non-socket filesystem entry, socket not owned by the effective user, or inconclusive stale-socket probe leaves the proxy unconfigured. An owned stale socket can proceed to the listener's ownership and identity checks for safe reclamation.
+At GUI startup, an active socket, non-socket filesystem entry, socket not owned by the current user, or inconclusive stale-socket probe leaves the proxy unconfigured. Stale probes have a 300 ms deadline. Unix listeners treat only `ECONNREFUSED` and `ENOENT` as stale. Windows AF_UNIX listeners require a refused Unix-socket probe; Cygwin listeners require a refused loopback TCP probe. Both check the file owner and recheck filesystem identity before removing a stale socket. Named pipes do not use filesystem-path checks.
 
 ### GUI rendering and memory
 

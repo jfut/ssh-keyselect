@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -129,6 +130,9 @@ func Listen(path string) (net.Listener, func(), error) {
 	if err := os.MkdirAll(filepath.Dir(nativePath), 0700); err != nil {
 		return nil, nil, fmt.Errorf("create socket-file directory: %w", err)
 	}
+	if err := removeStaleSocketFile(path, nativePath); err != nil {
+		return nil, nil, err
+	}
 	tcpListener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		return nil, nil, fmt.Errorf("listen on loopback TCP socket: %w", err)
@@ -188,6 +192,78 @@ func Listen(path string) (net.Listener, func(), error) {
 	})
 	cleanup := func() { _ = ln.Close() }
 	return ln, cleanup, nil
+}
+
+// removeStaleSocketFile reclaims a Cygwin endpoint only after its loopback listener refuses connections.
+func removeStaleSocketFile(path, nativePath string) error {
+	info, err := os.Lstat(nativePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect compatibility socket file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("compatibility socket path exists and is not a file: %s", nativePath)
+	}
+	if err := CheckCurrentUserFileOwner(nativePath); err != nil {
+		return fmt.Errorf("compatibility socket file is not owned by the current user: %w", err)
+	}
+	if _, err := read(path); err != nil {
+		return fmt.Errorf("compatibility socket path exists and is not a valid socket file: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	conn, dialErr := Dial(ctx, path)
+	cancel()
+	if dialErr == nil {
+		_ = conn.Close()
+		return fmt.Errorf("another instance is already listening on %s", nativePath)
+	}
+	if !errors.Is(dialErr, windows.WSAECONNREFUSED) && !errors.Is(dialErr, os.ErrNotExist) {
+		return fmt.Errorf("cannot determine whether compatibility socket is stale: %w", dialErr)
+	}
+
+	current, err := os.Lstat(nativePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reinspect stale compatibility socket: %w", err)
+	}
+	if !os.SameFile(info, current) {
+		return fmt.Errorf("compatibility socket path changed while checking stale socket: %s", nativePath)
+	}
+	if err := os.Remove(nativePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove stale compatibility socket: %w", err)
+	}
+	return nil
+}
+
+// CheckCurrentUserFileOwner prevents stale socket cleanup from removing another Windows user's file.
+func CheckCurrentUserFileOwner(path string) error {
+	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("read file owner: %w", err)
+	}
+	if descriptor == nil {
+		return fmt.Errorf("file owner is unavailable")
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		return fmt.Errorf("read file owner: %w", err)
+	}
+	if owner == nil {
+		return fmt.Errorf("file owner is unavailable")
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return fmt.Errorf("read current user: %w", err)
+	}
+	if user == nil || user.User.Sid == nil || !owner.Equals(user.User.Sid) {
+		return fmt.Errorf("file belongs to another user")
+	}
+	return nil
 }
 
 func makeSocketFile(portText, guidText string) (socketFile, error) {

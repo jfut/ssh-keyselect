@@ -13,11 +13,13 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Microsoft/go-winio"
 	"github.com/jfut/ssh-keyselect/internal/transport"
 	"github.com/jfut/ssh-keyselect/internal/winpath"
 	"github.com/jfut/ssh-keyselect/internal/winsocket"
+	"golang.org/x/sys/windows"
 )
 
 const pipePrefix = `\\.\pipe\`
@@ -78,6 +80,34 @@ func listenUnixSocket(path string) (net.Listener, func(), error) {
 	}
 	if err := os.MkdirAll(filepath.Dir(nativePath), 0700); err != nil {
 		return nil, nil, fmt.Errorf("create socket directory: %w", err)
+	}
+	if info, err := os.Lstat(nativePath); err == nil {
+		if info.Mode()&os.ModeSocket == 0 {
+			return nil, nil, fmt.Errorf("listen path exists and is not a socket: %s", nativePath)
+		}
+		if err := winsocket.CheckCurrentUserFileOwner(nativePath); err != nil {
+			return nil, nil, fmt.Errorf("stale listen socket is not owned by the current user: %w", err)
+		}
+		conn, dialErr := net.DialTimeout("unix", nativePath, 300*time.Millisecond)
+		if dialErr == nil {
+			_ = conn.Close()
+			return nil, nil, fmt.Errorf("another instance is already listening on %s", nativePath)
+		}
+		if !errors.Is(dialErr, windows.WSAECONNREFUSED) && !errors.Is(dialErr, os.ErrNotExist) {
+			return nil, nil, fmt.Errorf("cannot determine whether socket is stale: %w", dialErr)
+		}
+		current, err := os.Lstat(nativePath)
+		if errors.Is(err, os.ErrNotExist) {
+			// Another process already removed the stale socket; bind below.
+		} else if err != nil {
+			return nil, nil, fmt.Errorf("reinspect stale socket: %w", err)
+		} else if !os.SameFile(info, current) {
+			return nil, nil, fmt.Errorf("listen path changed while checking stale socket: %s", nativePath)
+		} else if err := os.Remove(nativePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, nil, fmt.Errorf("remove stale socket: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, fmt.Errorf("inspect listen socket: %w", err)
 	}
 	ln, err := net.Listen("unix", nativePath)
 	if err != nil {

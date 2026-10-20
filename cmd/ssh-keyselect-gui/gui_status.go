@@ -339,6 +339,8 @@ func (a *guiApp) identityCard(c *ui.Context, theme *ui.Theme) {
 		rows := a.sortedIdentities()
 		a.identityTable.Selected = &a.selectedIdentity
 		a.identityTable.Sort = &a.identitySort
+		// Keep the viewport fixed while a sortable column reorders keyed identities.
+		a.identityTable.KeepOffset = true
 		table := guitable.IdentityTable(c, &a.identityTable, rows, true, true).
 			Grow(1).MinHeight(theme.Space(50))
 		table.ContextMenu(func(menu *ui.Menu) {

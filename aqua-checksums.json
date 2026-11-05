@@ -56,43 +56,43 @@
       "algorithm": "sha256"
     },
     {
-      "id": "github_release/github.com/goreleaser/goreleaser/v2.18.3/goreleaser_Darwin_all.tar.gz",
-      "checksum": "156F425536D40CE282B79C637CA00EB943792DE6AD1E2482A4B21CC4B5421F4F",
+      "id": "github_release/github.com/goreleaser/goreleaser/v2.20.0/goreleaser_Darwin_all.tar.gz",
+      "checksum": "B4F0702BCB2AAD05BD13AF5AC69EC94D84270DCE59B917E7A8C446C974E29372",
       "algorithm": "sha256"
     },
     {
-      "id": "github_release/github.com/goreleaser/goreleaser/v2.18.3/goreleaser_Linux_arm64.tar.gz",
-      "checksum": "FA7011A7F8DE3B504326B8552CF21C708ED3089519B01D372DA32EF4E8D298D7",
+      "id": "github_release/github.com/goreleaser/goreleaser/v2.20.0/goreleaser_Linux_arm64.tar.gz",
+      "checksum": "2DADA0A6BBCD10F3A05228D98E77D25FB362EFB9E5BAB6362CF37E64C8A26CB9",
       "algorithm": "sha256"
     },
     {
-      "id": "github_release/github.com/goreleaser/goreleaser/v2.18.3/goreleaser_Linux_x86_64.tar.gz",
-      "checksum": "B8DEE4728BCA1ABA0D71A832A17CD0A3799F75372878E7FFA36AEF2343BCE0BC",
+      "id": "github_release/github.com/goreleaser/goreleaser/v2.20.0/goreleaser_Linux_x86_64.tar.gz",
+      "checksum": "D2483159E6007F814132CB56635AD30A70013DBEB813D6033A7E01ADF6AE108C",
       "algorithm": "sha256"
     },
     {
-      "id": "github_release/github.com/goreleaser/goreleaser/v2.18.3/goreleaser_Windows_arm64.zip",
-      "checksum": "371DA2DDDAC0C19C729A74D26305C2D168CFF50728EBE14B581FE5B7C5D98B59",
+      "id": "github_release/github.com/goreleaser/goreleaser/v2.20.0/goreleaser_Windows_arm64.zip",
+      "checksum": "B7AE30D558DB74D67BD03E39D3309AABF47E1A18649EF4AC4429F329C357F496",
       "algorithm": "sha256"
     },
     {
-      "id": "github_release/github.com/goreleaser/goreleaser/v2.18.3/goreleaser_Windows_x86_64.zip",
-      "checksum": "5E7455DF2ACCBFE69416CF9CCBC6AEFE9ABD2543525D5D6DA24426D827AA8171",
+      "id": "github_release/github.com/goreleaser/goreleaser/v2.20.0/goreleaser_Windows_x86_64.zip",
+      "checksum": "3C6A58F6941224A25EC28DE733554743E9B2517C40C76991EEF5474F8C1C2C1A",
       "algorithm": "sha256"
     },
     {
-      "id": "github_release/github.com/upx/upx/v5.2.1/upx-5.2.1-amd64_linux.tar.xz",
-      "checksum": "402162AAD30AF47E60DBD767FB2E64CA394ACE9727BA1F40283641F1D1B91657",
+      "id": "github_release/github.com/upx/upx/v5.3.0/upx-5.3.0-amd64_linux.tar.xz",
+      "checksum": "79CEA8A50B6FA102D10C7B79A419CD77DEAD3CC2D78661DE2DC5E5815DC505C1",
       "algorithm": "sha256"
     },
     {
-      "id": "github_release/github.com/upx/upx/v5.2.1/upx-5.2.1-arm64_linux.tar.xz",
-      "checksum": "A72D112C5970A904A31DA0B9C84F919BC16B9A311787C12245508544A78C7D36",
+      "id": "github_release/github.com/upx/upx/v5.3.0/upx-5.3.0-arm64_linux.tar.xz",
+      "checksum": "2A4AFA860AC7AA6968F88DF7841823746E5D00BA56AFFDF9342C2F5254FB776F",
       "algorithm": "sha256"
     },
     {
-      "id": "github_release/github.com/upx/upx/v5.2.1/upx-5.2.1-win64.zip",
-      "checksum": "EABC6792A347D45E945BE7748423E7868FD01B0D2BCAA2F4B1031FD71FF69BDA",
+      "id": "github_release/github.com/upx/upx/v5.3.0/upx-5.3.0-win64.zip",
+      "checksum": "D127996C76615E431BE810E9C8D2910DBE3DD400600C5C0C50276FC5A17A9705",
       "algorithm": "sha256"
     },
     {
@@ -126,8 +126,8 @@
       "algorithm": "sha256"
     },
     {
-      "id": "registries/github_content/github.com/aquaproj/aqua-registry/v4.575.0/registry.yaml",
-      "checksum": "340BC6F1FA7124077830D090576F9DC538212FDD7869F8DE973E81B0124EFFA1",
+      "id": "registries/github_content/github.com/aquaproj/aqua-registry/v4.581.1/registry.yaml",
+      "checksum": "78C9BE2054AEE428D1844DBF87765A7FE0D313E7226ECEB88F958CB7FD98EED8",
       "algorithm": "sha256"
     }
   ]

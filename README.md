@@ -369,6 +369,8 @@ On Windows and Linux, use `--config FILE` to select another file; command-line v
 - When `agent.upstream` is empty, `UPSTREAM_SSH_AUTH_SOCK` takes precedence over `SSH_AUTH_SOCK`. If neither is set, the GUI uses the native OpenSSH agent endpoint: `\\.\pipe\openssh-ssh-agent` on Windows and `~/.ssh/ssh-agent.sock` on macOS and Linux.
 - To keep the upstream endpoint tied to a changing environment variable, set `agent.upstream = "env:SSH_AUTH_SOCK"`, or choose Environment variable in GUI Settings and enter its name. The GUI resolves this reference at startup and when Settings are applied, while saving the `env:NAME` reference in the config file. The variable must be set and non-empty.
 - Environment variables in ordinary paths and a leading `~` are expanded using the GUI process environment.
+- `[history].path` selects the selection-history database when set. If omitted or empty, the GUI uses `history.sqlite` in the application data folder; relative paths are resolved from that folder. GUI Settings leaves the field blank and shows the resolved default path as its placeholder. It saves `history.path` only when you enter or choose a path.
+- `[history].enabled` controls whether the GUI records and shows selection history. `[history].remember_selection` controls whether it remembers the last selected key for each verified target host. Both default to `true`, can be changed in GUI Settings, and are written to the config only when set to `false`. When both are `false`, the GUI does not create or open the SQLite database.
 - If the configured Listen endpoint is active or blocked by a non-socket file, the GUI starts with the proxy `Not configured`. A stale socket owned by the current user is replaced when KeySelect confirms that it is no longer listening.
 
 The configuration loader rejects unknown keys. Logging is off by default. Set `log.level` to enable it and optionally set `log.file` to append logs to a file. When `log.file` is empty, logs go to standard error.
@@ -385,6 +387,12 @@ banner exchange: Connection to <IP> port <Port>: Software caused connection abor
 Example configuration for `Git Bash` on Windows, using a Cygwin-compatible listener:
 
 ```toml
+[history]
+# Add a setting only to override its default:
+# enabled = false
+# path = "/path/to/history.sqlite"
+# remember_selection = false
+
 [agent]
 # Replace USERNAME with your Windows user name:
 upstream = 'C:\Users\USERNAME\.ssh\ssh-upstream-agent.sock'
@@ -420,6 +428,10 @@ The GUI has an Auto Select switch beside Agent Proxy. Enabling it requires confi
 ### GUI picker
 
 The window title combines the action, application name, and local display time. The request-context area begins with the same timestamp followed by host details. It lets you scroll to earlier hops. Use the arrow keys to move through matches, Enter to select, and Esc to cancel.
+
+When `history.remember_selection` is enabled and the request includes a verified target host key, the GUI remembers the selected key for that host and preselects it the next time the same host key is seen. The picker still opens and requires you to confirm a selection. Requests without a verified target host key start with the first key.
+
+When `history.enabled` is enabled, choose `File > History…` or press Ctrl+Shift+H (Cmd+Shift+H on macOS) to review request time, target host and forwarded hops, selected key, selection time, and whether the picker completed, was canceled, or timed out. Right-click a row to copy its displayed information or delete it. Use `Export CSV` to save the full history and host paths. The result describes the picker interaction; it does not indicate whether the SSH server accepted authentication.
 
 Right-click a key row and choose `Copy`, or press Ctrl+C, to copy its Comment, Type, Size, and Fingerprint as tab-separated text.
 
@@ -501,7 +513,7 @@ SSH KeySelect has no telemetry, analytics, automatic update checks, or diagnosti
 
 The proxy communicates with SSH clients and the upstream agent configured through its endpoints. SSH clients receive public key identities and permitted authentication signatures. With SSH agent forwarding, remote processes can receive these responses through your SSH connection. Private key material stays in the upstream agent and is never received by KeySelect. See [Security and limitations](#security-and-limitations) and the [agent forwarding guidance](#through-agent-forwarding).
 
-The GUI stores configuration locally when you save it. The pickers can read local `known_hosts` files to display host-name hints.
+The GUI stores configuration locally. When History is enabled, it stores verified target-host and forwarding-hop key fingerprints, `known_hosts` display hints, the selected public-key data, fingerprint and comment, and local request and selection times. When key remembrance is enabled, it also stores target-host and selected-key fingerprints to restore the prior choice. Public-key data does not include private keys. Host names shown in history are local `known_hosts` hints, not verified host names.
 
 Diagnostic logging is off by default. When enabled, logs go to local output or the CLI log file you specify and can contain endpoint paths, host key fingerprints, and request metadata. Review logs before sharing them. Bundled libraries do not add third-party online services to the application. Your upstream agent and SSH client have their own settings and privacy policies.
 

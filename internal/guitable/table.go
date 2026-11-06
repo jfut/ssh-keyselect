@@ -177,6 +177,11 @@ func identityColumns(numbered, sortable bool) []ui.TableColumn {
 
 // IdentityCell applies the compact type and alternating row colors in both key tables.
 func IdentityCell(c *ui.Context, row, selected int, theme *ui.Theme, content func()) {
+	CompactCell(c, row, selected, theme).Children(content)
+}
+
+// CompactCell builds a key-table cell so other tables can share its row density and striping.
+func CompactCell(c *ui.Context, row, selected int, theme *ui.Theme) ui.Element {
 	cell := ui.Row(c).Grow(1).
 		Margin(-theme.Space(1.5), -theme.Space(2.5)).
 		Padding(theme.Space(1.5), theme.Space(2.5)).FontSize(theme.Rem(0.9))
@@ -187,5 +192,5 @@ func IdentityCell(c *ui.Context, row, selected int, theme *ui.Theme, content fun
 			cell.Background(ui.Hex("#edf3fa"))
 		}
 	}
-	cell.Children(content)
+	return cell
 }

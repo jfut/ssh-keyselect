@@ -34,6 +34,8 @@ type HostBinding struct {
 // SelectionContext carries verified connection details to the identity picker.
 type SelectionContext struct {
 	HostBindings []HostBinding
+	ConnectionID string
+	RequestedAt  time.Time
 }
 
 type selectionDetail struct {

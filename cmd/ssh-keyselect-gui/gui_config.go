@@ -21,6 +21,7 @@ import (
 	"github.com/jfut/ssh-keyselect/internal/config"
 	"github.com/jfut/ssh-keyselect/internal/guitable"
 	"github.com/jfut/ssh-keyselect/internal/listener"
+	"github.com/jfut/ssh-keyselect/internal/selectionhistory"
 	"github.com/jfut/ssh-keyselect/internal/transport"
 )
 
@@ -37,6 +38,44 @@ func (a *guiApp) applyConfig(cfg config.Config, dirty bool, complete func(error)
 		}
 		return
 	}
+	historyPath := ""
+	var err error
+	selectionDataEnabled := cfg.History.Enabled || cfg.History.RememberSelection
+	if selectionDataEnabled {
+		historyPath, err = guiHistoryDatabasePath(a.userDataPath, cfg.History.Path)
+		if err != nil {
+			if complete != nil {
+				complete(err)
+			} else {
+				a.statusMessage = "Could not resolve selection data path: " + err.Error()
+				if a.window != nil {
+					a.window.Invalidate()
+				}
+			}
+			return
+		}
+	}
+	nextHistoryStore := a.historyStore
+	historyChanged := false
+	if !selectionDataEnabled {
+		nextHistoryStore = nil
+		historyChanged = a.historyStore != nil || a.historyPath != ""
+	} else if a.historyStore == nil || historyPath != a.historyPath {
+		nextHistoryStore, err = selectionhistory.Open(historyPath)
+		if err != nil {
+			err = fmt.Errorf("open selection data database: %w", err)
+			if complete != nil {
+				complete(err)
+			} else {
+				a.statusMessage = err.Error()
+				if a.window != nil {
+					a.window.Invalidate()
+				}
+			}
+			return
+		}
+		historyChanged = true
+	}
 	a.applying = true
 	a.statusMessage = ""
 	a.updateConfigurationMenu()
@@ -47,19 +86,37 @@ func (a *guiApp) applyConfig(cfg config.Config, dirty bool, complete func(error)
 	go func() {
 		actualListen, effectiveMode, err := a.runtime.Apply(cfg)
 		if window == nil {
+			if historyChanged && nextHistoryStore != nil {
+				_ = nextHistoryStore.Close()
+			}
 			return
 		}
 		window.Update(func() {
 			a.applying = false
 			a.updateConfigurationMenu()
 			if a.ctx.Err() != nil {
+				if historyChanged && nextHistoryStore != nil {
+					_ = nextHistoryStore.Close()
+				}
 				return
 			}
 			if err == nil {
 				cfg.Agent.Upstream = config.ExpandPath(cfg.Agent.Upstream)
 				cfg.Agent.Listen = config.ExpandPath(cfg.Agent.Listen)
 				cfg.Log.File = config.ExpandPath(cfg.Log.File)
+				cfg.History.Path = config.ExpandPath(cfg.History.Path)
+				previousHistoryEnabled := a.cfg.History.Enabled
+				previousRememberSelection := a.cfg.History.RememberSelection
 				a.cfg = cfg
+				if historyChanged {
+					a.replaceHistoryStore(nextHistoryStore, historyPath)
+				} else {
+					a.selector.SetHistoryOptions(a.historyStore, cfg.History.Enabled, cfg.History.RememberSelection)
+					if previousHistoryEnabled != cfg.History.Enabled || previousRememberSelection != cfg.History.RememberSelection {
+						a.syncHistoryView()
+					}
+				}
+				a.updateConfigurationMenu()
 				mygo.Theme.SetSource(mygo.ThemeSource(cfg.GUI.Theme))
 				a.actualListen = actualListen
 				a.listenMode = effectiveMode
@@ -71,6 +128,9 @@ func (a *guiApp) applyConfig(cfg config.Config, dirty bool, complete func(error)
 				a.updateWindowTitle()
 				a.refreshIdentities()
 			} else {
+				if historyChanged && nextHistoryStore != nil {
+					_ = nextHistoryStore.Close()
+				}
 				a.statusMessage = "Could not apply configuration: " + err.Error()
 			}
 			if complete != nil {
@@ -402,6 +462,9 @@ func (a *guiApp) applicationMenu() *mygo.Menu {
 		mygo.Separator(),
 		{ID: "settings.open", Label: "Settings…", Accelerator: "CmdOrCtrl+,", Click: func(*mygo.MenuItem, *mygo.Window) { a.openSettings() }},
 		mygo.Separator(),
+		{ID: "history.open", Label: "History…", Accelerator: "CmdOrCtrl+Shift+H", Disabled: !a.cfg.History.Enabled,
+			Click: func(*mygo.MenuItem, *mygo.Window) { a.openHistory() }},
+		mygo.Separator(),
 		{Role: mygo.RoleQuit},
 	}
 	helpItems := []*mygo.MenuItem{
@@ -462,6 +525,9 @@ func (a *guiApp) updateConfigurationMenu() {
 		if item := menu.ItemByID(id); item != nil {
 			item.SetEnabled(enabled)
 		}
+	}
+	if item := menu.ItemByID("history.open"); item != nil {
+		item.SetEnabled(enabled && a.cfg.History.Enabled)
 	}
 }
 
@@ -527,6 +593,9 @@ type guiSettingsValues struct {
 	upstreamEnvName                  string
 	listenPath                       string
 	logFile                          string
+	historyFile                      string
+	historyEnabled                   bool
+	rememberSelection                bool
 	upstreamMode                     string
 	listenMode                       string
 	logLevel                         string
@@ -546,6 +615,10 @@ type guiSettingsState struct {
 	resolvedUpstream                 string
 	listenPath                       string
 	logFile                          string
+	historyFile                      string
+	historyPlaceholder               string
+	historyEnabled                   bool
+	rememberSelection                bool
 	upstreamMode                     string
 	listenMode                       string
 	logLevel                         string
@@ -561,6 +634,7 @@ type guiSettingsState struct {
 	browsingUpstream                 bool
 	browsingListen                   bool
 	browsingLog                      bool
+	browsingHistory                  bool
 	err                              string
 }
 
@@ -580,14 +654,14 @@ func (a *guiApp) openSettings() {
 		mygo.Dialog.Error("Could not open settings.", err.Error())
 		return
 	}
-	// Keep the centered footer compact while reserving room for the source selector.
-	height, minHeight := 566, 566
+	// Leave enough height for the settings sections and visible space below the footer.
+	height, minHeight := 644, 644
 	switch runtime.GOOS {
 	case "darwin":
 		// Match the Windows action spacing while preserving clearance around rounded sheet corners.
-		height, minHeight = 520, 520
+		height, minHeight = 598, 598
 	case "linux":
-		height, minHeight = 500, 500
+		height, minHeight = 578, 578
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: "Settings", Parent: a.window, Modal: true,
@@ -637,12 +711,19 @@ func newGUISettingsState(app *guiApp, cfg config.Config) (*guiSettingsState, err
 	if environmentBacked {
 		upstreamSource = guiUpstreamEnvironmentSource
 	}
+	historyPlaceholder, err := guiHistoryDatabasePath(app.userDataPath, "")
+	if err != nil {
+		return nil, err
+	}
 	state := &guiSettingsState{
 		app: app, cfg: cfg,
 		upstreamSource: upstreamSource, upstreamPath: guiDisplayEndpointPath(upstreamEndpoint),
 		upstreamEnvName: upstreamEnvName, resolvedUpstream: upstreamEndpoint,
 		listenPath: guiDisplayEndpointPath(listenEndpoint), logFile: guiDisplayFilePath(cfg.Log.File),
-		upstreamMode: upstreamMode, listenMode: listenMode, logLevel: strings.ToLower(cfg.Log.Level),
+		historyFile:        guiDisplayFilePath(strings.TrimSpace(cfg.History.Path)),
+		historyPlaceholder: guiDisplayFilePath(historyPlaceholder), historyEnabled: cfg.History.Enabled,
+		rememberSelection: cfg.History.RememberSelection,
+		upstreamMode:      upstreamMode, listenMode: listenMode, logLevel: strings.ToLower(cfg.Log.Level),
 		theme:                            guiThemeLabel(cfg.GUI.Theme),
 		selectionTimeout:                 float64(cfg.Agent.SelectionTimeout),
 		allowUnboundSigningOnBindFailure: cfg.Agent.AllowUnboundSigningOnBindFailure,
@@ -662,7 +743,9 @@ func (s *guiSettingsState) values() guiSettingsValues {
 	return guiSettingsValues{
 		upstreamSource: s.upstreamSource, upstreamPath: s.upstreamPath,
 		upstreamEnvName: s.upstreamEnvName, listenPath: s.listenPath, logFile: s.logFile,
-		upstreamMode: s.upstreamMode, listenMode: s.listenMode, logLevel: s.logLevel,
+		historyFile: s.historyFile, historyEnabled: s.historyEnabled,
+		rememberSelection: s.rememberSelection,
+		upstreamMode:      s.upstreamMode, listenMode: s.listenMode, logLevel: s.logLevel,
 		theme: s.theme, selectionTimeout: s.selectionTimeout,
 		allowUnboundSigningOnBindFailure: s.allowUnboundSigningOnBindFailure,
 	}
@@ -685,6 +768,7 @@ func (s *guiSettingsState) view(c *ui.Context) {
 		s.endpointSection(c, theme, "Listen", false)
 		s.selectionSection(c, theme)
 		s.loggingSection(c, theme)
+		s.historySection(c, theme)
 		s.themeSection(c, theme)
 		if s.err != "" {
 			ui.Text(c, s.err).MaxLines(2).Ellipsis("…").Tooltip(s.err).TextColor(theme.Danger)
@@ -697,7 +781,7 @@ func (s *guiSettingsState) view(c *ui.Context) {
 			if cancel.Clicked() {
 				guiCloseWindowAfterFrame(s.window)
 			}
-			apply := guiDialogActionButton(c, "Apply", true, s.applying || s.browsingListen || s.browsingUpstream || s.browsingLog)
+			apply := guiDialogActionButton(c, "Apply", true, s.applying || s.browsingListen || s.browsingUpstream || s.browsingLog || s.browsingHistory)
 			if apply.Clicked() {
 				s.apply()
 			}
@@ -847,6 +931,33 @@ func (s *guiSettingsState) loggingSection(c *ui.Context, theme *ui.Theme) {
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Level").Width(theme.Space(26)).Shrink(0)
 			ui.Select(c, &s.logLevel, []string{"off", "debug", "info", "warn", "error"}).Label("Log level").Grow(1)
+		})
+	})
+}
+
+// historySection lets the user choose where the GUI stores selection history.
+func (s *guiSettingsState) historySection(c *ui.Context, theme *ui.Theme) {
+	section := ui.Column(c).Shrink(0).Gap(theme.Space(1)).
+		Padding(theme.Space(1.5), theme.Space(2)).
+		Border(1, theme.Border).Radius(theme.Space(2)).Background(theme.Surface)
+	section.Children(func() {
+		ui.Text(c, "History").FontWeight(500)
+		ui.Row(c).Gap(theme.Space(3)).AlignItems(ui.Center).Children(func() {
+			ui.Checkbox(c, &s.historyEnabled, "Enable History")
+			ui.Checkbox(c, &s.rememberSelection, "Remember key selection per target host")
+		})
+		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "DB path").Width(theme.Space(26)).Shrink(0)
+			input := ui.TextInput(c, &s.historyFile).Label("History database file").
+				Placeholder(s.historyPlaceholder).Grow(1)
+			if input.Changed() {
+				s.historyFile = guiFormatPathInput(s.historyFile)
+				s.err = ""
+			}
+			browse := ui.Button(c, "Browse…").Disabled(s.browsingHistory)
+			if browse.Clicked() {
+				s.browseHistoryFile()
+			}
 		})
 	})
 }
@@ -1006,6 +1117,9 @@ func (s *guiSettingsState) buildConfig() (config.Config, error) {
 	cfg.Log.File = config.ExpandPath(guiFilePathFromDisplay(s.logFile))
 	cfg.Log.Level = s.logLevel
 	cfg.GUI.Theme = guiThemeValue(s.theme)
+	cfg.History.Path = config.ExpandPath(guiFilePathFromDisplay(strings.TrimSpace(s.historyFile)))
+	cfg.History.Enabled = s.historyEnabled
+	cfg.History.RememberSelection = s.rememberSelection
 	if err := cfg.Validate(); err != nil {
 		return config.Config{}, err
 	}
@@ -1028,6 +1142,35 @@ func (s *guiSettingsState) browseLogFile() {
 				s.err = err.Error()
 			} else if path != "" {
 				s.logFile = guiDisplayFilePath(path)
+				s.err = ""
+			}
+		})
+	}()
+}
+
+// browseHistoryFile lets the user choose a custom history database file.
+func (s *guiSettingsState) browseHistoryFile() {
+	defaultPath, err := guiHistoryDatabasePath(s.app.userDataPath, guiFilePathFromDisplay(s.historyFile))
+	if err != nil {
+		s.err = err.Error()
+		return
+	}
+	s.browsingHistory = true
+	window := s.window
+	go func() {
+		path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
+			Parent: window, Title: "Choose history database", DefaultPath: defaultPath,
+			Filters: []mygo.FileFilter{{Name: "SQLite databases", Extensions: []string{"sqlite", "db"}}},
+		})
+		if window == nil || window.IsDestroyed() {
+			return
+		}
+		window.Update(func() {
+			s.browsingHistory = false
+			if err != nil {
+				s.err = err.Error()
+			} else if path != "" {
+				s.historyFile = guiDisplayFilePath(path)
 				s.err = ""
 			}
 		})

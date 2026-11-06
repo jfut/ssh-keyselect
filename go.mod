@@ -11,6 +11,7 @@ require (
 	github.com/alecthomas/kong v1.16.1
 	github.com/ebitengine/purego v0.11.2
 	github.com/egoist/mygo v0.5.5
+	github.com/ncruces/go-sqlite3 v0.36.0
 	go.digitalxero.dev/go-msi v0.5.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
@@ -20,6 +21,8 @@ require (
 
 require (
 	github.com/go-text/typesetting v0.3.5 // indirect
+	github.com/ncruces/go-sqlite3-wasm/v6 v6.4.35401 // indirect
+	github.com/ncruces/julianday v1.0.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.4 // indirect
 )

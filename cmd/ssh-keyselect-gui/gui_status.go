@@ -27,6 +27,9 @@ import (
 var (
 	guiRefreshIcon  = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5m-5 4a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>`))
 	guiSettingsIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2m9-9h-2M5 12H3m15.36-6.36-1.42 1.42M7.06 16.94l-1.42 1.42m12.72 0-1.42-1.42M7.06 7.06 5.64 5.64"/></svg>`))
+	guiHistoryIcon  = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12a9 9 0 1 0 2.64-6.36L3 8m0-5v5h5m4-1v5l4 2"/></svg>`))
+	guiChevronLeft  = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m15 18-6-6 6-6"/></svg>`))
+	guiChevronRight = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 18 6-6-6-6"/></svg>`))
 	guiCopyIcon     = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v11a1.5 1.5 0 0 1-1.5 1.5H16M5.5 8h9A1.5 1.5 0 0 1 16 9.5v10A1.5 1.5 0 0 1 14.5 21h-9A1.5 1.5 0 0 1 4 19.5v-10A1.5 1.5 0 0 1 5.5 8Z"/></svg>`))
 	guiCloseIcon    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2" d="m6 6 12 12M18 6 6 18"/></svg>`))
 )
@@ -158,6 +161,9 @@ func (a *guiApp) view(c *ui.Context) {
 		if c.Shortcut(ui.Cmd|ui.Shift, ui.KeyS) {
 			a.saveAsConfiguration()
 		}
+		if c.Shortcut(ui.Cmd|ui.Shift, ui.KeyH) {
+			a.openHistory()
+		}
 		if c.Shortcut(ui.Cmd, ui.KeyComma) {
 			a.openSettings()
 		}
@@ -223,7 +229,7 @@ func (a *guiApp) view(c *ui.Context) {
 // applicationMenuBar draws themed in-window menus on platforms without an app menu bar.
 func (a *guiApp) applicationMenuBar(c *ui.Context, theme *ui.Theme) {
 	barColor := theme.Surface
-	fileMenuWidth, helpMenuWidth := theme.Space(64), theme.Space(48)
+	fileMenuWidth, helpMenuWidth := theme.Space(72), theme.Space(48)
 	if theme.Dark {
 		barColor = ui.Hex("#181818")
 	}
@@ -248,6 +254,10 @@ func (a *guiApp) applicationMenuBar(c *ui.Context, theme *ui.Theme) {
 				a.applicationMenuItem(c, theme, "Save As", "Ctrl+Shift+S", a.applying, a.saveAsConfiguration)
 				guiApplicationMenuSeparator(c, theme)
 				a.applicationMenuItem(c, theme, "Settings…", "Ctrl+,", a.applying, a.openSettings)
+				if a.cfg.History.Enabled {
+					guiApplicationMenuSeparator(c, theme)
+					a.applicationMenuItem(c, theme, "History…", "Ctrl+Shift+H", false, a.openHistory)
+				}
 				guiApplicationMenuSeparator(c, theme)
 				a.applicationMenuItem(c, theme, "Quit", "Ctrl+Q", false, mygo.App.Quit)
 			})
@@ -387,6 +397,14 @@ func (a *guiApp) connectionCard(c *ui.Context, theme *ui.Theme) {
 			settings.Size(theme.Space(8), theme.Space(8))
 			if settings.Clicked() && !a.applying {
 				a.openSettings()
+			}
+			if a.cfg.History.Enabled {
+				history := guiIconButton(c, guiHistoryIcon, "History", true, theme)
+				history.Size(theme.Space(8), theme.Space(8))
+				history.Disabled(a.applying)
+				if history.Clicked() && !a.applying {
+					a.openHistory()
+				}
 			}
 			if a.statusMessage != "" {
 				ui.Row(c).Grow(1).Gap(theme.Space(1)).AlignItems(ui.Center).Children(func() {

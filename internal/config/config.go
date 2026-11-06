@@ -29,9 +29,17 @@ const (
 )
 
 type Config struct {
-	Agent AgentConfig `toml:"agent"`
-	Log   LogConfig   `toml:"log"`
-	GUI   GUIConfig   `toml:"gui"`
+	History HistoryConfig `toml:"history"`
+	Agent   AgentConfig   `toml:"agent"`
+	Log     LogConfig     `toml:"log"`
+	GUI     GUIConfig     `toml:"gui"`
+}
+
+// HistoryConfig holds selection-history storage and key-remembrance settings.
+type HistoryConfig struct {
+	Enabled           bool   `toml:"enabled"`
+	Path              string `toml:"path"`
+	RememberSelection bool   `toml:"remember_selection"`
 }
 
 type AgentConfig struct {
@@ -48,15 +56,22 @@ type LogConfig struct {
 	Level string `toml:"level"`
 }
 
-// GUIConfig holds settings that affect only the native GUI presentation.
+// GUIConfig holds settings specific to the native GUI.
 type GUIConfig struct {
 	Theme string `toml:"theme"`
 }
 
 type saveConfig struct {
-	Agent saveAgentConfig `toml:"agent"`
-	Log   LogConfig       `toml:"log"`
-	GUI   GUIConfig       `toml:"gui"`
+	History *saveHistoryConfig `toml:"history,omitempty"`
+	Agent   saveAgentConfig    `toml:"agent"`
+	Log     LogConfig          `toml:"log"`
+	GUI     GUIConfig          `toml:"gui"`
+}
+
+type saveHistoryConfig struct {
+	Enabled           *bool    `toml:"enabled,omitempty"`
+	Path              tomlPath `toml:"path,omitempty"`
+	RememberSelection *bool    `toml:"remember_selection,omitempty"`
 }
 
 type saveAgentConfig struct {
@@ -93,7 +108,7 @@ func isTOMLLiteralString(value string) bool {
 }
 
 func configForSave(cfg Config) saveConfig {
-	return saveConfig{
+	encoded := saveConfig{
 		Agent: saveAgentConfig{
 			Listen:                           tomlPath(cfg.Agent.Listen),
 			Upstream:                         tomlPath(cfg.Agent.Upstream),
@@ -105,6 +120,19 @@ func configForSave(cfg Config) saveConfig {
 		Log: cfg.Log,
 		GUI: cfg.GUI,
 	}
+	if cfg.History.Path != "" || !cfg.History.Enabled || !cfg.History.RememberSelection {
+		history := &saveHistoryConfig{Path: tomlPath(cfg.History.Path)}
+		if !cfg.History.Enabled {
+			disabled := false
+			history.Enabled = &disabled
+		}
+		if !cfg.History.RememberSelection {
+			disabled := false
+			history.RememberSelection = &disabled
+		}
+		encoded.History = history
+	}
+	return encoded
 }
 
 // UpstreamEnvironmentReference returns the config value for an environment-backed endpoint.
@@ -155,8 +183,9 @@ func Default() Config {
 			UpstreamMode: transport.Auto, ListenMode: transport.Auto,
 			SelectionTimeout: defaultSelectionTimeoutSeconds,
 		},
-		Log: LogConfig{Level: "off"},
-		GUI: GUIConfig{Theme: GUIThemeLight},
+		Log:     LogConfig{Level: "off"},
+		History: HistoryConfig{Enabled: true, RememberSelection: true},
+		GUI:     GUIConfig{Theme: GUIThemeLight},
 	}
 }
 
@@ -220,6 +249,7 @@ func Load(path string) (Config, error) {
 	cfg.Agent.Listen = ExpandPath(cfg.Agent.Listen)
 	cfg.Agent.Upstream = ExpandPath(cfg.Agent.Upstream)
 	cfg.Log.File = ExpandPath(cfg.Log.File)
+	cfg.History.Path = ExpandPath(cfg.History.Path)
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}

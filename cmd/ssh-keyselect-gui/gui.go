@@ -24,6 +24,7 @@ import (
 	"github.com/jfut/ssh-keyselect/internal/config"
 	"github.com/jfut/ssh-keyselect/internal/guitable"
 	"github.com/jfut/ssh-keyselect/internal/identity"
+	"github.com/jfut/ssh-keyselect/internal/selectionhistory"
 	"github.com/jfut/ssh-keyselect/internal/selector"
 	"github.com/jfut/ssh-keyselect/internal/transport"
 	"github.com/jfut/ssh-keyselect/internal/upstream"
@@ -48,8 +49,15 @@ type guiApp struct {
 	endpointAgent  *guiEndpointAgent
 	server         *agentproxy.Server
 	selector       *selector.GUISelector
+	historyStore   *selectionhistory.Store
+	historyStores  []*selectionhistory.Store
+	historyPath    string
+	historyError   string
+	userDataPath   string
 	runtime        *guiRuntime
 	window         *mygo.Window
+	historyWindow  *mygo.Window
+	historyView    *guiHistoryState
 	mainWindow     atomic.Pointer[mygo.Window]
 	mainVisible    atomic.Bool
 	tray           *mygo.Tray
@@ -230,9 +238,28 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 
 	mygo.App.SetName("SSH KeySelect")
 	mygo.App.SetVersion(version)
-	if err := setGUIUserDataPath(); err != nil {
+	userDataPath, err := setGUIUserDataPath()
+	if err != nil {
 		return cmdutil.ReportError(stderr, guiCommandName, err)
 	}
+	app.userDataPath = userDataPath
+	if cfg.History.Enabled || cfg.History.RememberSelection {
+		historyPath, pathErr := guiHistoryDatabasePath(userDataPath, cfg.History.Path)
+		if pathErr != nil {
+			app.historyError = pathErr.Error()
+			logger.Warn("could not resolve GUI selection data path", "error", pathErr)
+		} else {
+			app.historyPath = historyPath
+			historyStore, openErr := selectionhistory.Open(historyPath)
+			if openErr != nil {
+				app.historyError = openErr.Error()
+				logger.Warn("could not open GUI selection data", "error", openErr)
+			} else {
+				app.historyStore = historyStore
+			}
+		}
+	}
+	guiSelector.SetHistoryOptions(app.historyStore, cfg.History.Enabled, cfg.History.RememberSelection)
 	mygo.Theme.SetSource(mygo.ThemeSource(cfg.GUI.Theme))
 	// Keep the native application menu on macOS; other platforms use the
 	// in-window menu bar so its text follows the app's normal UI size.
@@ -255,17 +282,17 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 }
 
 // setGUIUserDataPath keeps MyGo's per-user files alongside ssh-keyselect config.
-func setGUIUserDataPath() error {
+func setGUIUserDataPath() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
-		return fmt.Errorf("locate user data directory: %w", err)
+		return "", fmt.Errorf("locate user data directory: %w", err)
 	}
 	path := filepath.Join(base, "ssh-keyselect")
 	if err := os.MkdirAll(path, 0o700); err != nil {
-		return fmt.Errorf("create user data directory: %w", err)
+		return "", fmt.Errorf("create user data directory: %w", err)
 	}
 	mygo.App.SetPath(mygo.PathUserData, path)
-	return nil
+	return path, nil
 }
 
 func (a *guiApp) shutdown() {
@@ -274,6 +301,16 @@ func (a *guiApp) shutdown() {
 		a.stop()
 		if a.runtime != nil {
 			a.runtime.Close()
+		}
+		if a.historyWindow != nil && !a.historyWindow.IsDestroyed() {
+			a.historyWindow.Close()
+		}
+		for _, store := range append(a.historyStores, a.historyStore) {
+			if store != nil {
+				if err := store.Close(); err != nil {
+					a.logger.Warn("close GUI selection history", "error", err)
+				}
+			}
 		}
 		if a.tray != nil {
 			a.tray.Destroy()

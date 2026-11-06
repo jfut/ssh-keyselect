@@ -14,15 +14,23 @@ mkdir -p "$credits_workdir/bin"
 # Scan each released operating system with the GUI build tag so platform-specific MyGo dependencies are included.
 GOBIN="$credits_workdir/bin" go install github.com/google/go-licenses@v1.6.0
 go_licenses="$credits_workdir/bin/go-licenses"
+sqlite_wasm_module="github.com/ncruces/go-sqlite3-wasm/v6"
+sqlite_wasm_version="$(go list -m -f '{{.Version}}' "$sqlite_wasm_module")"
+gomodcache="$(go env GOMODCACHE)"
+license_ignores=(--ignore "$sqlite_wasm_module")
 
 for target_os in linux darwin windows; do
-	GOOS="$target_os" GOFLAGS=-tags=gui "$go_licenses" csv ./... > "$credits_workdir/$target_os.csv"
-	GOOS="$target_os" GOFLAGS=-tags=gui "$go_licenses" save ./... --save_path="$credits_workdir/save-$target_os" --force
+	GOOS="$target_os" GOFLAGS=-tags=gui "$go_licenses" csv ./... "${license_ignores[@]}" > "$credits_workdir/$target_os.csv"
+	GOOS="$target_os" GOFLAGS=-tags=gui "$go_licenses" save ./... --save_path="$credits_workdir/save-$target_os" --force "${license_ignores[@]}"
 done
 
 root_module="$(go list -m)"
 GOFLAGS=-tags=gui go list -m -f '{{printf "%s\t%s" .Path .Version}}' all > "$credits_workdir/modules.tsv"
-cat "$credits_workdir/linux.csv" "$credits_workdir/darwin.csv" "$credits_workdir/windows.csv" |
+cat "$credits_workdir/linux.csv" "$credits_workdir/darwin.csv" "$credits_workdir/windows.csv" > "$credits_workdir/licenses.csv"
+printf '%s,%s,%s\n' "$sqlite_wasm_module" "https://github.com/ncruces/go-sqlite3-wasm/blob/$sqlite_wasm_version/LICENSE" "MIT-0" >> "$credits_workdir/licenses.csv"
+sort -u "$credits_workdir/licenses.csv" > "$credits_workdir/sorted-licenses.csv"
+
+cat "$credits_workdir/sorted-licenses.csv" |
 	sort -u > "$credits_workdir/licenses.csv"
 
 # Collapse platform-specific package imports to one entry per Go module.
@@ -73,13 +81,17 @@ awk -v root="$root_module" '
 	while IFS=$'\t' read -r module version license url; do
 		printf '\n\n%s %s: %s\n%s\n----------------------------------------------------------------\n' "$module" "$version" "$license" "$url"
 		license_file=""
-		for target_os in linux darwin windows; do
-			module_dir="$credits_workdir/save-$target_os/$module"
-			if [[ -d "$module_dir" ]]; then
-				license_file="$(find "$module_dir" -type f \( -iname 'LICENSE' -o -iname 'LICENSE.*' -o -iname 'COPYING' -o -iname 'COPYING.*' \) -print | sort | head -n 1)"
-				if [[ -n "$license_file" ]]; then break; fi
-			fi
-		done
+		if [[ "$module" == "$sqlite_wasm_module" ]]; then
+			license_file="$gomodcache/$module@$version/LICENSE"
+		else
+			for target_os in linux darwin windows; do
+				module_dir="$credits_workdir/save-$target_os/$module"
+				if [[ -d "$module_dir" ]]; then
+					license_file="$(find "$module_dir" -type f \( -iname 'LICENSE' -o -iname 'LICENSE.*' -o -iname 'COPYING' -o -iname 'COPYING.*' \) -print | sort | head -n 1)"
+					if [[ -n "$license_file" ]]; then break; fi
+				fi
+			done
+		fi
 		if [[ -z "$license_file" ]]; then
 			printf 'Could not find license text for %s\n' "$module" >&2
 			exit 1

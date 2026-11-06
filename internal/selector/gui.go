@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"runtime"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/jfut/ssh-keyselect/internal/branding"
 	"github.com/jfut/ssh-keyselect/internal/guitable"
 	"github.com/jfut/ssh-keyselect/internal/identity"
+	"github.com/jfut/ssh-keyselect/internal/selectionhistory"
 	"github.com/jfut/ssh-keyselect/internal/upstream"
 )
 
@@ -33,10 +35,13 @@ type GUISelector struct {
 	initOnce sync.Once
 	stopOnce sync.Once
 
-	mu      sync.RWMutex
-	refresh func(context.Context) ([]identity.Identity, error)
-	parent  func() *mygo.Window
-	windows map[*mygo.Window]struct{}
+	mu                sync.RWMutex
+	refresh           func(context.Context) ([]identity.Identity, error)
+	parent            func() *mygo.Window
+	windows           map[*mygo.Window]struct{}
+	history           *selectionhistory.Store
+	recordHistory     bool
+	rememberSelection bool
 }
 
 // NewGUISelector creates a selector that is used after MyGo's application loop starts.
@@ -58,6 +63,18 @@ func (s *GUISelector) SetWindowProvider(parent func() *mygo.Window) {
 	s.mu.Unlock()
 }
 
+// SetHistoryOptions controls event recording and per-host key remembrance independently.
+func (s *GUISelector) SetHistoryOptions(history *selectionhistory.Store, recordHistory, rememberSelection bool) {
+	s.mu.Lock()
+	s.history = history
+	s.recordHistory = recordHistory
+	s.rememberSelection = rememberSelection
+	if !recordHistory && !rememberSelection {
+		s.history = nil
+	}
+	s.mu.Unlock()
+}
+
 // Stop cancels pending selection requests when the application is closing.
 func (s *GUISelector) Stop() {
 	s.init()
@@ -76,11 +93,90 @@ func (s *GUISelector) Stop() {
 }
 
 // Select displays the verified SSH host-key path and waits for one selected identity.
-func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity, requestContext SelectionContext) ([]identity.Identity, error) {
+func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity, requestContext SelectionContext) (selected []identity.Identity, selectionErr error) {
+	s.init()
+	s.mu.RLock()
+	parentProvider, refresh, history := s.parent, s.refresh, s.history
+	recordHistory, rememberSelection := s.recordHistory, s.rememberSelection
+	var releaseHistory func()
+	var historyErr error
+	if history != nil && (recordHistory || rememberSelection) {
+		releaseHistory, historyErr = history.Retain()
+		if historyErr != nil {
+			history = nil
+		}
+	} else {
+		history = nil
+	}
+	s.mu.RUnlock()
+	if releaseHistory != nil {
+		defer releaseHistory()
+	}
+	if historyErr != nil {
+		slog.Warn("could not retain GUI selection history", "error", historyErr)
+	}
+	event := selectionhistory.Event{
+		ConnectionID: requestContext.ConnectionID,
+		RequestedAt:  requestContext.RequestedAt,
+		Outcome:      selectionhistory.OutcomeFailed,
+		HostHops:     selectionHistoryHops(requestContext),
+	}
+	if event.RequestedAt.IsZero() {
+		event.RequestedAt = time.Now()
+	}
+	if history != nil {
+		defer func() {
+			event.ResolvedAt = time.Now()
+			selectedSuccessfully := selectionErr == nil && len(selected) > 0
+			if selectedSuccessfully {
+				chosen := selected[0]
+				event.SelectedAt = event.ResolvedAt
+				event.SelectedKeyFingerprint = identity.Fingerprint(chosen.Blob)
+				event.SelectedKeyAlgorithm = chosen.Algorithm
+				event.SelectedKeyBlob = append([]byte(nil), chosen.Blob...)
+				event.SelectedKeyComment = chosen.Comment
+			}
+			if !recordHistory {
+				if selectedSuccessfully && rememberSelection {
+					target := selectionTargetFingerprint(requestContext)
+					if target != "" {
+						recordCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer cancel()
+						if err := history.RememberSelection(recordCtx, target, event.SelectedKeyFingerprint, event.SelectedAt); err != nil {
+							slog.Warn("could not remember GUI key selection", "error", err)
+						}
+					}
+				}
+				return
+			}
+			switch {
+			case selectedSuccessfully:
+				event.Outcome = selectionhistory.OutcomeSelected
+			case len(identities) == 0 && selectionErr == nil:
+				event.Outcome = selectionhistory.OutcomeNoKeys
+			case errors.Is(selectionErr, context.DeadlineExceeded):
+				event.Outcome = selectionhistory.OutcomeTimedOut
+			case errors.Is(selectionErr, context.Canceled), errors.Is(selectionErr, ErrCancelled), selectionErr == nil:
+				event.Outcome = selectionhistory.OutcomeCancelled
+			default:
+				event.Outcome = selectionhistory.OutcomeFailed
+			}
+			recordCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var err error
+			if rememberSelection {
+				err = history.Record(recordCtx, event)
+			} else {
+				err = history.RecordHistory(recordCtx, event)
+			}
+			if err != nil {
+				slog.Warn("could not record GUI selection history", "error", err)
+			}
+		}()
+	}
 	if len(identities) == 0 {
 		return nil, nil
 	}
-	s.init()
 	select {
 	case <-s.stopped:
 		return nil, ErrCancelled
@@ -100,9 +196,6 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 	default:
 	}
 
-	s.mu.RLock()
-	parentProvider, refresh := s.parent, s.refresh
-	s.mu.RUnlock()
 	var parent *mygo.Window
 	if parentProvider != nil {
 		parent = parentProvider()
@@ -111,14 +204,21 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 	defer releasePickerReturnWindow(returnWindow)
 	shownAt := time.Now()
 	offered := append([]identity.Identity(nil), identities...)
+	selectedIndex := 0
+	if rememberSelection {
+		selectedIndex = guiPreferredSelectionIndex(ctx, history, requestContext, offered)
+	}
 	picker := &guiPickerState{
 		ctx: ctx, identities: offered,
 		offered:        offered,
 		requestContext: requestContext, detailsText: guiSelectionDetailsText(requestContext, shownAt),
 		shownAt: shownAt, refresh: refresh,
-		selected: 0, focusFilter: true,
+		selected: selectedIndex, focusFilter: true,
 		// The current target is the final entry in a multi-host path.
 		detailsScroll: ui.ScrollState{Y: math.MaxFloat32},
+	}
+	if selectedIndex > 0 {
+		picker.tableState.ScrollIntoView(selectedIndex)
 	}
 	title := fmt.Sprintf("%s [%s - %s]", identitySelectionPrompt, branding.Name, selectionDisplayTime(shownAt))
 	windowParent, windowModal := pickerWindowOwnership(parent)
@@ -168,6 +268,7 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 		s.windows[window] = struct{}{}
 		s.mu.Unlock()
 	}
+	event.DialogOpenedAt = time.Now()
 	// Show the modal as soon as it is created so its parent cannot stay blocked
 	// if the platform has already delivered MyGo's one-shot ready event.
 	window.Show()
@@ -250,6 +351,49 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 		return nil, selection.err
 	}
 	return []identity.Identity{selection.identity}, nil
+}
+
+func selectionHistoryHops(requestContext SelectionContext) []selectionhistory.HostHop {
+	hops := make([]selectionhistory.HostHop, len(requestContext.HostBindings))
+	for index, binding := range requestContext.HostBindings {
+		hops[index] = selectionhistory.HostHop{
+			Algorithm: binding.Algorithm, Fingerprint: binding.Fingerprint,
+			IsForwarding: binding.IsForwarding, KnownHosts: append([]string(nil), binding.KnownHosts...),
+		}
+	}
+	return hops
+}
+
+func selectionTargetFingerprint(requestContext SelectionContext) string {
+	if len(requestContext.HostBindings) == 0 {
+		return ""
+	}
+	target := requestContext.HostBindings[len(requestContext.HostBindings)-1]
+	if target.IsForwarding {
+		return ""
+	}
+	return target.Fingerprint
+}
+
+func guiPreferredSelectionIndex(ctx context.Context, history *selectionhistory.Store, requestContext SelectionContext, identities []identity.Identity) int {
+	target := selectionTargetFingerprint(requestContext)
+	if history == nil || target == "" {
+		return 0
+	}
+	preferred, ok, err := history.PreferredSelection(ctx, target)
+	if err != nil {
+		slog.Warn("could not read GUI selection preference", "error", err)
+		return 0
+	}
+	if !ok {
+		return 0
+	}
+	for index, id := range identities {
+		if identity.Fingerprint(id.Blob) == preferred {
+			return index
+		}
+	}
+	return 0
 }
 
 func (s *GUISelector) init() {

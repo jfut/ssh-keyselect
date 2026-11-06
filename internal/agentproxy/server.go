@@ -237,6 +237,7 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 					return
 				}
 				if cachedResponse == nil {
+					requestedAt := time.Now()
 					available, err := listAgent(ctx, s.Agent, upstreamSessionBinds, requestTimeout)
 					if errors.Is(err, upstream.ErrSessionBindingRejected) && s.allowUnboundSigningOnBindFailure.Load() {
 						upstreamSessionBindingFallback = true
@@ -248,7 +249,10 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 					var chosen []identity.Identity
 					if err == nil {
 						selectionCtx, cancelSelection := s.newSelectionContext(ctx)
-						chosen, err = s.selectAvailableIdentities(selectionCtx, log, selectionContext(sessionBinds), available)
+						requestContext := selectionContext(sessionBinds)
+						requestContext.ConnectionID = sessionID
+						requestContext.RequestedAt = requestedAt
+						chosen, err = s.selectAvailableIdentities(selectionCtx, log, requestContext, available)
 						if errors.Is(selectionCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
 							log.Warn("identity selection timed out", "timeout", s.selectionTimeoutDuration())
 							err = errSelectionTimeout

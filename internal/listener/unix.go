@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -66,6 +67,11 @@ func ListenWithMode(path string, requested transport.Mode) (net.Listener, func()
 	}
 
 	listenConfig := net.ListenConfig{Control: func(_, _ string, raw syscall.RawConn) error {
+		// Linux carries the descriptor mode onto the bound socket. macOS rejects
+		// fchmod on an unbound socket, so it applies the mode to the owned path below.
+		if runtime.GOOS != "linux" {
+			return nil
+		}
 		var chmodErr error
 		if err := raw.Control(func(fd uintptr) {
 			chmodErr = syscall.Fchmod(int(fd), 0600)
@@ -102,6 +108,23 @@ func ListenWithMode(path string, requested transport.Mode) (net.Listener, func()
 		if err == nil && os.SameFile(created, current) {
 			_ = os.Remove(path)
 		}
+	}
+	if runtime.GOOS != "linux" {
+		if err := os.Chmod(path, 0600); err != nil {
+			removeCreatedSocket()
+			_ = ln.Close()
+			return nil, nil, fmt.Errorf("set Unix socket permissions: %w", err)
+		}
+		current, err := os.Lstat(path)
+		if err != nil || !os.SameFile(created, current) {
+			removeCreatedSocket()
+			_ = ln.Close()
+			if err != nil {
+				return nil, nil, fmt.Errorf("inspect created Unix socket: %w", err)
+			}
+			return nil, nil, fmt.Errorf("listen path changed while setting socket permissions: %s", path)
+		}
+		created = current
 	}
 	if created.Mode().Perm() != 0600 {
 		removeCreatedSocket()

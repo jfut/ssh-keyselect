@@ -236,7 +236,7 @@ func (a *guiApp) applicationMenuBar(c *ui.Context, theme *ui.Theme) {
 	// Let the negative side margins expand the stretched row to both window edges.
 	ui.Row(c).Gap(theme.Space(1)).AlignItems(ui.Center).
 		Margin(-theme.Space(3), -theme.Space(3), 0, -theme.Space(3)).
-		Padding(0, 0, theme.Space(1), 0).Background(barColor).
+		Background(barColor).
 		BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Role(ui.RoleMenuBar).Label("Application menu").Children(func() {
 		file := guiMenuBarButton(c, theme, "File", a.fileMenuOpen)
 		if file.Clicked() {

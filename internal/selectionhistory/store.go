@@ -304,13 +304,13 @@ func (s *Store) HasSelectionContext(ctx context.Context, targetHostFingerprint s
 		FROM selection_events AS e
 		LEFT JOIN selection_host_hops AS h ON h.event_id = e.id
 		WHERE e.target_host_fingerprint = ? AND e.outcome = ? AND e.selected_key_fingerprint != ''
-		ORDER BY e.id DESC, h.ordinal`,
+		ORDER BY e.requested_at_ns DESC, e.id DESC, h.ordinal`,
 		targetHostFingerprint, string(OutcomeSelected),
 	)
 	if err != nil {
 		return false, fmt.Errorf("read selection context from history: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	forwardingPathMatches := func(path []string) bool {
 		if len(path) != len(forwardedFingerprints) {
 			return false
@@ -429,7 +429,7 @@ func (s *Store) record(ctx context.Context, event Event, rememberSelection bool)
 	if err != nil {
 		return fmt.Errorf("begin selection history write: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var dialogOpenedAt, selectedAt any
 	if !event.DialogOpenedAt.IsZero() {
 		dialogOpenedAt = event.DialogOpenedAt.UTC().UnixNano()
@@ -537,7 +537,7 @@ func (s *Store) Delete(ctx context.Context, eventID int64) error {
 	if err != nil {
 		return fmt.Errorf("begin selection history delete: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var targetHost, selectedKey string
 	var selectedAt sql.NullInt64
@@ -635,10 +635,12 @@ func (s *Store) listEvents(ctx context.Context, page, pageSize int, all bool) ([
 	if err != nil {
 		return nil, 0, fmt.Errorf("begin selection history read: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var total int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM selection_events`).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count selection history events: %w", err)
+	if !all {
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM selection_events`).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count selection history events: %w", err)
+		}
 	}
 	query := `
 		WITH page_events AS (
@@ -717,6 +719,9 @@ func (s *Store) listEvents(ctx context.Context, page, pageSize int, all bool) ([
 	if err := tx.Commit(); err != nil {
 		return nil, 0, fmt.Errorf("finish selection history read: %w", err)
 	}
+	if all {
+		return events, len(events), nil
+	}
 	return events, total, nil
 }
 
@@ -734,7 +739,7 @@ func (s *Store) ExportCSV(ctx context.Context, destination io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("begin selection history export: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	rows, err := tx.QueryContext(ctx, `
 		SELECT e.id, e.connection_id, e.requested_at_ns, e.dialog_opened_at_ns, e.resolved_at_ns,
 			e.selected_at_ns, e.outcome, e.target_host_fingerprint, e.selected_key_fingerprint,

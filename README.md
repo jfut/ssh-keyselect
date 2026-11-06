@@ -140,7 +140,7 @@ Windows release executables and installers are currently unsigned. See the [Code
 > xattr -dr com.apple.quarantine ssh-keyselect
 > ```
 >
-> These commands remove the download quarantine attribute; they do not add a trusted code signature. Once Developer ID signing and notarization are enabled, you can skip them but should continue verifying downloads. See the [Code signing policy](#code-signing-policy) for the current status.
+> These commands remove the download quarantine attribute. They do not add a trusted code signature. Once Developer ID signing and notarization are enabled, you can skip them but should continue verifying downloads. See the [Code signing policy](#code-signing-policy) for the current status.
 
 ### Linux
 
@@ -209,7 +209,7 @@ apk add --allow-untrusted "./$apk_file"
 
 Start the GUI first, then set `SSH_AUTH_SOCK` to the Listen endpoint shown in its main window. On macOS and Linux, the default endpoint is `$HOME/.ssh/ssh-keyselect-agent.sock`.
 
-`Upstream` is the endpoint for your existing SSH agent; `Listen` is where SSH clients connect to KeySelect. The cards show these paths, and their `Copy export command` buttons copy POSIX `export` assignments with shell-quoted paths.
+`Upstream` is the endpoint for your existing SSH agent. `Listen` is where SSH clients connect to KeySelect. The cards show these paths, and their `Copy export command` buttons copy POSIX `export` assignments with shell-quoted paths.
 
 The GUI can start without an upstream agent. Configure its endpoints in Settings.
 
@@ -225,7 +225,7 @@ ssh user@example.org
 
 #### VS Code on Windows
 
-Configure VS Code's [terminal profile](https://code.visualstudio.com/docs/terminal/profiles) to use Git Bash. The `bash.exe` path below is for the Scoop `git-with-openssh` package; replace it with the path to your Git Bash executable if you installed Git Bash another way. Start the GUI with Listen mode set to `cygwin` and a Listen endpoint that matches `SSH_AUTH_SOCK` below. See the [Git Bash configuration example](#configuration) for setting the endpoint. Open User Settings (JSON) and add the following properties inside the existing top-level object. Keep your other settings. If any of these keys already exist, update them instead of adding duplicates; merge the `Git Bash` profile and `SSH_AUTH_SOCK` into the existing profile and environment objects. Replace `USERNAME` with your Windows account name:
+Configure VS Code's [terminal profile](https://code.visualstudio.com/docs/terminal/profiles) to use Git Bash. The `bash.exe` path below is for the Scoop `git-with-openssh` package. Replace it with the path to your Git Bash executable if you installed Git Bash another way. Start the GUI with Listen mode set to `cygwin` and a Listen endpoint that matches `SSH_AUTH_SOCK` below. See the [Git Bash configuration example](#configuration) for setting the endpoint. Open User Settings (JSON) and add the following properties inside the existing top-level object. Keep your other settings. If any of these keys already exist, update them instead of adding duplicates. Merge the `Git Bash` profile and `SSH_AUTH_SOCK` into the existing profile and environment objects. Replace `USERNAME` with your Windows account name:
 
 ```json
 "terminal.integrated.profiles.windows": {
@@ -305,7 +305,7 @@ Long comments in CLI tables are shortened with an ellipsis for display. The orig
 
 ### Options and environment
 
-The wrapper options go before `--`; arguments after it are passed to OpenSSH.
+The wrapper options go before `--`. Arguments after it are passed to OpenSSH.
 
 - `ssh-keyselect ssh`: `--upstream`, `--upstream-mode`, `--listen`, `--listen-mode`, `--selection-timeout`, `--allow-unbound-signing-on-bind-failure`, `--log-level`, `--log-file`
 - `ssh-keyselect list` and `ssh-keyselect test`: `--upstream`, `--upstream-mode`
@@ -324,7 +324,7 @@ For an SSH session, pass `--log-file FILE` to write KeySelect diagnostic logs to
 ssh-keyselect ssh --log-level debug --log-file ~/ssh-keyselect.log -- user@example.org
 ```
 
-The log file is replaced on each run and uses mode `0600` on Unix-like systems. OpenSSH output remains in the terminal. Review logs before sharing them; they can include SSH host key fingerprints and request metadata.
+The log file is replaced on each run and uses mode `0600` on Unix-like systems. OpenSSH output remains in the terminal. Review logs before sharing them. They can include SSH host key fingerprints and request metadata.
 
 ### Terminal picker
 
@@ -363,19 +363,19 @@ If `XDG_CONFIG_HOME` is set, it must be an absolute path and the GUI reads TOML 
 | Linux    | `~/.config/ssh-keyselect/config.toml`                                                                       |
 | macOS    | `~/Library/Application Support/ssh-keyselect/config.toml`                                                   |
 
-On Windows and Linux, use `--config FILE` to select another file; command-line values override file values. On macOS, open or save configuration files through the GUI's File menu. The following environment variables also affect endpoint paths:
+On Windows and Linux, use `--config FILE` to select another file. Command-line values override file values. On macOS, open or save configuration files through the GUI's File menu. The following environment variables also affect endpoint paths:
 
 - `SSH_KEYSELECT_LISTEN` overrides `agent.listen`.
 - When `agent.upstream` is empty, `UPSTREAM_SSH_AUTH_SOCK` takes precedence over `SSH_AUTH_SOCK`. If neither is set, the GUI uses the native OpenSSH agent endpoint: `\\.\pipe\openssh-ssh-agent` on Windows and `~/.ssh/ssh-agent.sock` on macOS and Linux.
 - To keep the upstream endpoint tied to a changing environment variable, set `agent.upstream = "env:SSH_AUTH_SOCK"`, or choose Environment variable in GUI Settings and enter its name. The GUI resolves this reference at startup and when Settings are applied, while saving the `env:NAME` reference in the config file. The variable must be set and non-empty.
 - Environment variables in ordinary paths and a leading `~` are expanded using the GUI process environment.
-- `[history].path` selects the selection-history database when set. If omitted or empty, the GUI uses `history.sqlite` in the application data folder; relative paths are resolved from that folder. GUI Settings leaves the field blank and shows the resolved default path as its placeholder. It saves `history.path` only when you enter or choose a path.
+- `[history].path` selects the selection-history database when set. If omitted or empty, the GUI uses `history.sqlite` in the application data folder. Relative paths are resolved from that folder. GUI Settings leaves the field blank and shows the resolved default path as its placeholder. It saves `history.path` only when you enter or choose a path.
 - `[history].enabled` controls whether the GUI records and shows selection history. `[history].remember_selection` controls whether it remembers the last selected key for each verified target host. Both default to `true`, can be changed in GUI Settings, and are written to the config only when set to `false`. When both are `false`, the GUI does not create or open the SQLite database.
 - If the configured Listen endpoint is active or blocked by a non-socket file, the GUI starts with the proxy `Not configured`. A stale socket owned by the current user is replaced when KeySelect confirms that it is no longer listening.
 
 The configuration loader rejects unknown keys. Logging is off by default. Set `log.level` to enable it and optionally set `log.file` to append logs to a file. When `log.file` is empty, logs go to standard error.
 
-The key selection timeout defaults to 120 seconds. In GUI Settings, set `agent.selection_timeout`; for `ssh-keyselect ssh`, pass `--selection-timeout SECONDS`.
+The key selection timeout defaults to 120 seconds. In GUI Settings, set `agent.selection_timeout`. For `ssh-keyselect ssh`, pass `--selection-timeout SECONDS`.
 
 If, after a timeout, the SSH client prints the errors below and the server's `/var/log/secure` contains `penalty: exceeded LoginGraceTime`, set the Key selection Timeout to match that server's `LoginGraceTime` value in seconds.
 
@@ -433,7 +433,7 @@ When `history.remember_selection` is enabled and the request includes a verified
 
 When `history.enabled` is enabled and the request includes a verified target host key, the picker displays a `First selection` badge if no earlier selection matches the same Target Host and Forwarded path. It applies to the request context, not an individual key, and does not indicate whether a prior key authenticated successfully. The badge is omitted when the target host or forwarded path cannot be verified, or history cannot be read.
 
-When `history.enabled` is enabled, choose `File > History…` or press Ctrl+Shift+H (Cmd+Shift+H on macOS) to review request time, target host and forwarded hops, selected key, selection time, and whether the picker completed, was canceled, or timed out. Right-click a row to copy its displayed information or delete it. Use `Export CSV` to save the full history and host paths. The result describes the picker interaction; it does not indicate whether the SSH server accepted authentication.
+When `history.enabled` is enabled, choose `File > History…` or press Ctrl+Shift+H (Cmd+Shift+H on macOS) to review request time, target host and forwarded hops, selected key, selection time, and whether the picker completed, was canceled, or timed out. Right-click a row to copy its displayed information or delete it. Use `Export CSV` to save the full history and host paths. The result describes the picker interaction. It does not indicate whether the SSH server accepted authentication.
 
 Right-click a key row and choose `Copy`, or press Ctrl+C, to copy its Comment, Type, Size, and Fingerprint as tab-separated text.
 
@@ -486,10 +486,10 @@ The agent protocol does not provide a hostname. Names matched from the default l
 
 1. Quit the GUI and finish SSH sessions started through the CLI wrapper.
 2. Restore shell and Git changes:
-   - Restore the previous `SSH_AUTH_SOCK` value or remove the setting from shell startup files and VS Code User Settings (JSON). If you changed VS Code's default profile for this setup, restore its previous value; remove the Git Bash profile if you added it only for KeySelect and no longer need it.
+   - Restore the previous `SSH_AUTH_SOCK` value or remove the setting from shell startup files and VS Code User Settings (JSON). If you changed VS Code's default profile for this setup, restore its previous value. Remove the Git Bash profile if you added it only for KeySelect and no longer need it.
    - Restore earlier `ssh`, `GIT_SSH_COMMAND`, and `core.sshCommand` values. If you added only this README's examples, run `unalias ssh` and, in each affected repository, `git config --local --unset core.sshCommand`.
 3. Remove KeySelect wrappers, `PATH` entries, shortcuts, and program files. For archive installs, delete the distribution directory with its `LICENSE` and `CREDITS` files, plus any copied `SSH KeySelect.app`. For package installs, remove the package with the package manager you used to install it.
-4. Optionally delete the GUI configuration files (see [Configuration](#configuration)), including files saved with Save As or `--config`, and diagnostic logs created with `--log-file`. Keep your upstream agent and SSH keys; they belong to your SSH setup.
+4. Optionally delete the GUI configuration files (see [Configuration](#configuration)), including files saved with Save As or `--config`, and diagnostic logs created with `--log-file`. Keep your upstream agent and SSH keys. They belong to your SSH setup.
 
 For RHEL-compatible Linux distributions:
 

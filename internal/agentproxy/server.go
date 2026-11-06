@@ -28,6 +28,7 @@ const (
 	// Bound frontend resources even when forwarded clients leave connections open.
 	maxClientConnections    = 128
 	clientFrameReadTimeout  = 10 * time.Second
+	clientFrameWriteTimeout = 10 * time.Second
 	defaultSelectionTimeout = 120 * time.Second
 )
 
@@ -248,16 +249,11 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 					}
 					var chosen []identity.Identity
 					if err == nil {
-						selectionCtx, cancelSelection := s.newSelectionContext(ctx)
-						requestContext := selectionContext(sessionBinds)
-						requestContext.ConnectionID = sessionID
-						requestContext.RequestedAt = requestedAt
-						chosen, err = s.selectAvailableIdentities(selectionCtx, log, requestContext, available)
-						if errors.Is(selectionCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+						requestContext := selector.SelectionContext{ConnectionID: sessionID, RequestedAt: requestedAt}
+						chosen, err = s.selectAvailableIdentities(ctx, log, requestContext, available, sessionBinds)
+						if errors.Is(err, errSelectionTimeout) && ctx.Err() == nil {
 							log.Warn("identity selection timed out", "timeout", s.selectionTimeoutDuration())
-							err = errSelectionTimeout
 						}
-						cancelSelection()
 					}
 					if errors.Is(err, errSelectionTimeout) {
 						// Let SSH continue as if no keys were selected, then release this timed-out client.
@@ -335,8 +331,6 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 				if upstreamSessionBindingRejected {
 					if upstreamSessionBindingFallback {
 						if len(binding.raw) <= maxSessionBindingBytes-sessionBindingBytes {
-							binding.display.KnownHosts = sessionKnownHostNames(binding.hostKey)
-							binding.hostKey = nil
 							sessionBinds = append(sessionBinds, binding)
 							sessionBindingBytes += len(binding.raw)
 						} else {
@@ -362,8 +356,6 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 						upstreamSessionBindingFallback = true
 						upstreamSessionBinds = nil
 						if len(binding.raw) <= maxSessionBindingBytes-sessionBindingBytes {
-							binding.display.KnownHosts = sessionKnownHostNames(binding.hostKey)
-							binding.hostKey = nil
 							sessionBinds = append(sessionBinds, binding)
 							sessionBindingBytes += len(binding.raw)
 						}
@@ -376,8 +368,6 @@ func (s *Server) handleConnection(parent context.Context, conn net.Conn, session
 					}
 					continue
 				}
-				binding.display.KnownHosts = sessionKnownHostNames(binding.hostKey)
-				binding.hostKey = nil
 				upstreamSessionBinds = append(upstreamSessionBinds, binding.raw)
 				sessionBinds = append(sessionBinds, binding)
 				sessionBindingBytes += len(binding.raw)
@@ -460,7 +450,7 @@ func readClientFrame(conn net.Conn, timeout time.Duration) ([]byte, error) {
 	return message, nil
 }
 
-func (s *Server) selectAvailableIdentities(ctx context.Context, logger *slog.Logger, requestContext selector.SelectionContext, identities []identity.Identity) ([]identity.Identity, error) {
+func (s *Server) selectAvailableIdentities(ctx context.Context, logger *slog.Logger, requestContext selector.SelectionContext, identities []identity.Identity, bindings []verifiedSessionBind) ([]identity.Identity, error) {
 	logger.Info("identities requested", "upstream_count", len(identities))
 	if len(identities) == 0 {
 		return nil, nil
@@ -469,8 +459,11 @@ func (s *Server) selectAvailableIdentities(ctx context.Context, logger *slog.Log
 		logger.Info("auto select enabled; exposing all upstream identities", "identity_count", len(identities))
 		return identities, nil
 	}
-	chosen, err := s.Selector.Select(ctx, identities, requestContext)
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	requestContext.HostBindings = selectionContext(bindings).HostBindings
+	selectionCtx, cancelSelection := s.newSelectionContext(ctx)
+	defer cancelSelection()
+	chosen, err := s.Selector.Select(selectionCtx, identities, requestContext)
+	if errors.Is(selectionCtx.Err(), context.DeadlineExceeded) {
 		return nil, errSelectionTimeout
 	}
 	if err != nil {
@@ -480,8 +473,8 @@ func (s *Server) selectAvailableIdentities(ctx context.Context, logger *slog.Log
 		}
 		return nil, err
 	}
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+	if selectionCtx.Err() != nil {
+		return nil, selectionCtx.Err()
 	}
 	if err := validateSelection(identities, chosen); err != nil {
 		return nil, err
@@ -496,7 +489,9 @@ func (s *Server) newSelectionContext(parent context.Context) (context.Context, c
 
 func selectionContext(bindings []verifiedSessionBind) selector.SelectionContext {
 	requestContext := selector.SelectionContext{HostBindings: make([]selector.HostBinding, len(bindings))}
-	for i, binding := range bindings {
+	for i := range bindings {
+		binding := &bindings[i]
+		binding.resolveKnownHosts()
 		requestContext.HostBindings[i] = binding.display
 		requestContext.HostBindings[i].KnownHosts = append([]string(nil), binding.display.KnownHosts...)
 	}
@@ -610,7 +605,12 @@ func validSignResponse(message []byte) bool {
 func writeFailure(conn net.Conn) bool { return writeResponse(conn, []byte{protocol.Failure}) }
 
 func writeResponse(conn net.Conn, response []byte) bool {
-	return protocol.WriteFrame(conn, response) == nil
+	if err := conn.SetWriteDeadline(time.Now().Add(clientFrameWriteTimeout)); err != nil {
+		return false
+	}
+	writeErr := protocol.WriteFrame(conn, response)
+	clearErr := conn.SetWriteDeadline(time.Time{})
+	return writeErr == nil && clearErr == nil
 }
 
 // newSessionID returns a process-unique log correlation ID, not an authentication token.

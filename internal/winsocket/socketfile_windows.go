@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 
@@ -145,7 +146,7 @@ func Listen(path string) (net.Listener, func(), error) {
 	}
 	guid := formatGUID(guidData)
 	fileText := fmt.Sprintf("!<socket >%d s %s", port, guid)
-	file, err := os.OpenFile(nativePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	file, err := createPrivateSocketFile(nativePath)
 	if err != nil {
 		_ = tcpListener.Close()
 		return nil, nil, fmt.Errorf("create compatibility socket file: %w", err)
@@ -192,6 +193,33 @@ func Listen(path string) (net.Listener, func(), error) {
 	})
 	cleanup := func() { _ = ln.Close() }
 	return ln, cleanup, nil
+}
+
+// createPrivateSocketFile installs the owner-only ACL before writing the handshake secret.
+func createPrivateSocketFile(path string) (*os.File, error) {
+	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;;GA;;;SY)(A;;GA;;;OW)")
+	if err != nil {
+		return nil, fmt.Errorf("create private socket-file security descriptor: %w", err)
+	}
+	attributes := windows.SecurityAttributes{SecurityDescriptor: descriptor}
+	attributes.Length = uint32(unsafe.Sizeof(attributes))
+	pathPointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := windows.CreateFile(
+		pathPointer,
+		windows.GENERIC_WRITE|windows.FILE_READ_ATTRIBUTES,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		&attributes,
+		windows.CREATE_NEW,
+		windows.FILE_ATTRIBUTE_NORMAL,
+		0,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(handle), path), nil
 }
 
 // removeStaleSocketFile reclaims a Cygwin endpoint only after its loopback listener refuses connections.

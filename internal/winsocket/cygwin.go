@@ -5,6 +5,7 @@
 package winsocket
 
 import (
+	"crypto/subtle"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -163,7 +164,7 @@ func cygwinServerHandshake(conn net.Conn, guid [16]byte) error {
 	if _, err := io.ReadFull(conn, challenge[:]); err != nil {
 		return fmt.Errorf("read Cygwin socket handshake: %w", err)
 	}
-	if challenge != guid {
+	if subtle.ConstantTimeCompare(challenge[:], guid[:]) != 1 {
 		return fmt.Errorf("cygwin socket handshake GUID did not match")
 	}
 	if err := writeAll(conn, guid[:]); err != nil {

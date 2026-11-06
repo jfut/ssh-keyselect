@@ -60,8 +60,11 @@ type guiHistoryState struct {
 	total             int
 	events            []selectionhistory.Event
 	allEvents         []selectionhistory.Event
-	sortedAllEvents   []selectionhistory.Event
+	sortedAllIndices  []int
 	sortedAllOrder    ui.SortOrder
+	allEventsPage     []selectionhistory.Event
+	allEventsPageNo   int
+	allEventsPageSet  bool
 	allEventsLoaded   bool
 	allEventsLoadFail bool
 	observedSort      ui.SortOrder
@@ -175,7 +178,9 @@ func (a *guiApp) syncHistoryView() {
 
 func (s *guiHistoryState) clearAllEvents() {
 	s.allEvents = nil
-	s.sortedAllEvents = nil
+	s.sortedAllIndices = nil
+	s.allEventsPage = nil
+	s.allEventsPageSet = false
 	s.allEventsLoaded = false
 	s.allEventsLoadFail = false
 }
@@ -286,7 +291,9 @@ func (s *guiHistoryState) loadAllEvents() {
 				return
 			}
 			s.allEvents = events
-			s.sortedAllEvents = nil
+			s.sortedAllIndices = nil
+			s.allEventsPage = nil
+			s.allEventsPageSet = false
 			s.allEventsLoaded = true
 			s.allEventsLoadFail = false
 			s.events = nil
@@ -426,15 +433,44 @@ func (s *guiHistoryState) pageEvents() []selectionhistory.Event {
 		s.loadError = ""
 	}
 	if s.allEventsLoaded {
-		if s.sortedAllEvents == nil || s.sortedAllOrder != s.sort {
-			s.sortedAllEvents = sortHistoryEvents(s.allEvents, s.sort)
+		if s.sortedAllIndices == nil || s.sortedAllOrder != s.sort {
+			s.sortedAllIndices = sortHistoryEventIndices(s.allEvents, s.sort)
 			s.sortedAllOrder = s.sort
+			s.allEventsPageSet = false
 		}
-		start := min(s.page*selectionHistoryPageSize, len(s.sortedAllEvents))
-		end := min(start+selectionHistoryPageSize, len(s.sortedAllEvents))
-		return s.sortedAllEvents[start:end]
+		if s.allEventsPageSet && s.allEventsPageNo == s.page {
+			return s.allEventsPage
+		}
+		start := min(s.page*selectionHistoryPageSize, len(s.sortedAllIndices))
+		end := min(start+selectionHistoryPageSize, len(s.sortedAllIndices))
+		s.allEventsPage = make([]selectionhistory.Event, end-start)
+		for index, eventIndex := range s.sortedAllIndices[start:end] {
+			s.allEventsPage[index] = s.allEvents[eventIndex]
+		}
+		s.allEventsPageNo = s.page
+		s.allEventsPageSet = true
+		return s.allEventsPage
 	}
 	return sortHistoryEvents(s.events, s.sort)
+}
+
+// sortHistoryEventIndices keeps the complete-history sort index smaller than a duplicate event slice.
+func sortHistoryEventIndices(events []selectionhistory.Event, order ui.SortOrder) []int {
+	indices := make([]int, len(events))
+	for index := range indices {
+		indices[index] = index
+	}
+	if order.Column == "" {
+		return indices
+	}
+	sort.SliceStable(indices, func(i, j int) bool {
+		comparison := compareHistoryEvents(events[indices[i]], events[indices[j]], order.Column)
+		if order.Descending {
+			return comparison > 0
+		}
+		return comparison < 0
+	})
+	return indices
 }
 
 func sortHistoryEvents(source []selectionhistory.Event, order ui.SortOrder) []selectionhistory.Event {
@@ -734,7 +770,7 @@ func writeGUIHistoryCSV(path string, store *selectionhistory.Store) error {
 		return fmt.Errorf("create CSV temporary file: %w", err)
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 	if err := temporary.Chmod(0o600); err != nil {
 		_ = temporary.Close()
 		return fmt.Errorf("set CSV file permissions: %w", err)

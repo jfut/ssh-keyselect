@@ -30,8 +30,9 @@ type verifiedSessionBind struct {
 	sessionID []byte
 	raw       []byte
 	display   selector.HostBinding
-	// hostKey is kept only until the optional known_hosts display hint is resolved.
-	hostKey ssh.PublicKey
+	// hostKeyBlob aliases raw so parsed key data need not stay live before a picker opens.
+	hostKeyBlob        []byte
+	knownHostsResolved bool
 }
 
 // verifySessionBind accepts only host keys that verify their session identifier signature.
@@ -61,15 +62,27 @@ func verifySessionBind(message []byte) (verifiedSessionBind, error) {
 		return verifiedSessionBind{}, errors.New("session-bind host key signature did not verify")
 	}
 	return verifiedSessionBind{
-		sessionID: request.SessionID,
-		raw:       message,
-		hostKey:   hostKey,
+		sessionID:   request.SessionID,
+		raw:         message,
+		hostKeyBlob: request.HostKey,
 		display: selector.HostBinding{
 			Algorithm:    hostKey.Type(),
 			Fingerprint:  ssh.FingerprintSHA256(hostKey),
 			IsForwarding: request.IsForwarding,
 		},
 	}, nil
+}
+
+// resolveKnownHosts loads optional display hints only when the picker needs host context.
+func (binding *verifiedSessionBind) resolveKnownHosts() {
+	if binding.knownHostsResolved {
+		return
+	}
+	if hostKey, err := ssh.ParsePublicKey(binding.hostKeyBlob); err == nil {
+		binding.display.KnownHosts = sessionKnownHostNames(hostKey)
+	}
+	binding.hostKeyBlob = nil
+	binding.knownHostsResolved = true
 }
 
 // sessionKnownHostNames returns exact default known_hosts entries for this host key as display hints.

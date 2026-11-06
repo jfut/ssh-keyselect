@@ -69,13 +69,32 @@ func ListenWithMode(path string, requested transport.Mode) (net.Listener, func()
 		return nil, nil, fmt.Errorf("listen on Unix socket: %w", err)
 	}
 	// Cleanup checks ownership before unlinking; net.UnixListener's automatic unlink would bypass that check.
-	ln.(*net.UnixListener).SetUnlinkOnClose(false)
-	created, err := os.Lstat(path)
+	unixListener := ln.(*net.UnixListener)
+	unixListener.SetUnlinkOnClose(false)
+	boundSocket, err := unixListener.File()
 	if err != nil {
+		_ = ln.Close()
+		return nil, nil, fmt.Errorf("inspect bound Unix socket: %w", err)
+	}
+	created, statErr := boundSocket.Stat()
+	if statErr != nil {
+		_ = boundSocket.Close()
+		_ = ln.Close()
+		return nil, nil, fmt.Errorf("inspect bound Unix socket: %w", statErr)
+	}
+	if created.Mode()&os.ModeSocket == 0 {
+		_ = boundSocket.Close()
+		_ = ln.Close()
+		return nil, nil, fmt.Errorf("bound listener is not a Unix socket: %s", path)
+	}
+	current, err := os.Lstat(path)
+	if err != nil {
+		_ = boundSocket.Close()
 		_ = ln.Close()
 		return nil, nil, fmt.Errorf("inspect created Unix socket: %w", err)
 	}
-	if created.Mode()&os.ModeSocket == 0 {
+	if !os.SameFile(created, current) {
+		_ = boundSocket.Close()
 		_ = ln.Close()
 		return nil, nil, fmt.Errorf("listen path was replaced during socket creation: %s", path)
 	}
@@ -85,12 +104,19 @@ func ListenWithMode(path string, requested transport.Mode) (net.Listener, func()
 			_ = os.Remove(path)
 		}
 	}
-	if err := os.Chmod(path, 0600); err != nil {
+	if err := boundSocket.Chmod(0600); err != nil {
+		_ = boundSocket.Close()
 		removeCreatedSocket()
 		_ = ln.Close()
 		return nil, nil, fmt.Errorf("set Unix socket permissions: %w", err)
 	}
-	current, err := os.Lstat(path)
+	closeErr := boundSocket.Close()
+	if closeErr != nil {
+		removeCreatedSocket()
+		_ = ln.Close()
+		return nil, nil, fmt.Errorf("close bound Unix socket handle: %w", closeErr)
+	}
+	current, err = os.Lstat(path)
 	if err != nil || !os.SameFile(created, current) {
 		removeCreatedSocket()
 		_ = ln.Close()

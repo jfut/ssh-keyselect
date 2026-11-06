@@ -10,6 +10,8 @@ Selective SSH Agent Proxy
 [![Tag](https://img.shields.io/github/tag/jfut/ssh-keyselect.svg)](https://github.com/jfut/ssh-keyselect/releases)
 [![License](https://img.shields.io/badge/license-Apache%202-blue)](https://github.com/jfut/ssh-keyselect/blob/main/LICENSE)
 
+[![Listed on Awesome MyGo](https://awesomemygo.dev/badge.svg)](https://awesomemygo.dev/apps/ssh-keyselect)
+
 ## Overview
 
 `SSH KeySelect` is an interactive SSH agent proxy that lets you choose which keys an SSH client can offer from your existing agent. By rejecting signing requests for unselected keys, it helps mitigate **SSH Agent Hijacking**.

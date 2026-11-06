@@ -289,6 +289,71 @@ func (s *Store) PreferredSelection(ctx context.Context, targetHostFingerprint st
 	return fingerprint, true, nil
 }
 
+// HasSelectionContext reports whether a picker selection exists for a target and forwarded path.
+func (s *Store) HasSelectionContext(ctx context.Context, targetHostFingerprint string, forwardedFingerprints []string) (bool, error) {
+	if s == nil || s.db == nil || targetHostFingerprint == "" {
+		return false, nil
+	}
+	release, err := s.Retain()
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT e.id, h.host_key_fingerprint, h.is_forwarding
+		FROM selection_events AS e
+		LEFT JOIN selection_host_hops AS h ON h.event_id = e.id
+		WHERE e.target_host_fingerprint = ? AND e.outcome = ? AND e.selected_key_fingerprint != ''
+		ORDER BY e.id DESC, h.ordinal`,
+		targetHostFingerprint, string(OutcomeSelected),
+	)
+	if err != nil {
+		return false, fmt.Errorf("read selection context from history: %w", err)
+	}
+	defer rows.Close()
+	forwardingPathMatches := func(path []string) bool {
+		if len(path) != len(forwardedFingerprints) {
+			return false
+		}
+		for index := range path {
+			if path[index] != forwardedFingerprints[index] {
+				return false
+			}
+		}
+		return true
+	}
+	var eventID int64
+	var forwardingPath []string
+	haveEvent := false
+	for rows.Next() {
+		var rowEventID int64
+		var fingerprint sql.NullString
+		var isForwarding sql.NullInt64
+		if err := rows.Scan(&rowEventID, &fingerprint, &isForwarding); err != nil {
+			return false, fmt.Errorf("read selection context row: %w", err)
+		}
+		if haveEvent && rowEventID != eventID {
+			if forwardingPathMatches(forwardingPath) {
+				return true, nil
+			}
+			forwardingPath = nil
+		}
+		if !haveEvent || rowEventID != eventID {
+			eventID, haveEvent = rowEventID, true
+		}
+		if isForwarding.Valid && isForwarding.Int64 != 0 && fingerprint.Valid {
+			forwardingPath = append(forwardingPath, fingerprint.String)
+		}
+	}
+	if haveEvent && forwardingPathMatches(forwardingPath) {
+		return true, nil
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("read selection contexts from history: %w", err)
+	}
+	return false, nil
+}
+
 // RememberSelection stores a selected key without creating a history event.
 func (s *Store) RememberSelection(ctx context.Context, targetHostFingerprint, selectedKeyFingerprint string, selectedAt time.Time) error {
 	if s == nil || s.db == nil {

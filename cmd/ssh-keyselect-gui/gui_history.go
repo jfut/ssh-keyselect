@@ -98,9 +98,10 @@ func (a *guiApp) openHistory() {
 	if a.historyError != "" {
 		state.loadError = "Could not open history: " + a.historyError
 	}
+	// Fit all history columns at the default window width.
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: "History - SSH KeySelect", Parent: a.window,
-		Width: 1000, Height: 430, MinWidth: 820, MinHeight: 350,
+		Width: 1470, Height: 450, MinWidth: 820, MinHeight: 350,
 		Content: ui.View(state.view),
 	})
 	state.window = window

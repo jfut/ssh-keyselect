@@ -62,9 +62,9 @@ type GUIConfig struct {
 }
 
 type saveConfig struct {
-	History *saveHistoryConfig `toml:"history,omitempty"`
 	Agent   saveAgentConfig    `toml:"agent"`
 	Log     LogConfig          `toml:"log"`
+	History *saveHistoryConfig `toml:"history,omitempty"`
 	GUI     GUIConfig          `toml:"gui"`
 }
 

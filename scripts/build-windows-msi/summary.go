@@ -116,7 +116,7 @@ func updateMSISummary(path string, timestamp time.Time) error {
 		return fmt.Errorf("create temporary MSI: %w", err)
 	}
 	tempPath := temp.Name()
-	defer os.Remove(tempPath)
+	defer func() { _ = os.Remove(tempPath) }()
 
 	writer := cfb.NewWriterV3(temp)
 	replaced, err := copyStorage(writer.StorageWriter, reader.Storage, updatedSummary, true)

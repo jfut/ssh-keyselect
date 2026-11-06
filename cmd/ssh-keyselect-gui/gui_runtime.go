@@ -95,7 +95,7 @@ func (a *guiEndpointAgent) OpenSession(ctx context.Context) (upstream.AgentSessi
 type guiListenerState struct {
 	cleanup func()
 	cancel  context.CancelFunc
-	done    chan error
+	done    chan struct{}
 	active  atomic.Bool
 }
 
@@ -232,14 +232,14 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 
 func (r *guiRuntime) startListener(ln net.Listener, cleanup func()) {
 	serveCtx, cancel := context.WithCancel(r.ctx)
-	state := &guiListenerState{cleanup: cleanup, cancel: cancel, done: make(chan error, 1)}
+	state := &guiListenerState{cleanup: cleanup, cancel: cancel, done: make(chan struct{})}
 	state.active.Store(true)
 	r.listenerState = state
 	logger := r.server.Logger
 	go func() {
 		err := r.server.Serve(serveCtx, ln)
 		state.active.Store(false)
-		state.done <- err
+		close(state.done)
 		if err != nil && serveCtx.Err() == nil {
 			logger.Error("SSH agent proxy stopped", "error", err)
 			if r.onServeError != nil {

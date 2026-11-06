@@ -387,12 +387,6 @@ banner exchange: Connection to <IP> port <Port>: Software caused connection abor
 Example configuration for `Git Bash` on Windows, using a Cygwin-compatible listener:
 
 ```toml
-[history]
-# Add a setting only to override its default:
-# enabled = false
-# path = "/path/to/history.sqlite"
-# remember_selection = false
-
 [agent]
 # Replace USERNAME with your Windows user name:
 upstream = 'C:\Users\USERNAME\.ssh\ssh-upstream-agent.sock'
@@ -412,6 +406,12 @@ allow_unbound_signing_on_bind_failure = false
 file = ""
 level = "off"
 
+[history]
+# Add a setting only to override its default:
+# enabled = false
+# path = "/path/to/history.sqlite"
+# remember_selection = false
+
 [gui]
 theme = "light" # "light" or "dark"
 ```
@@ -430,6 +430,8 @@ The GUI has an Auto Select switch beside Agent Proxy. Enabling it requires confi
 The window title combines the action, application name, and local display time. The request-context area begins with the same timestamp followed by host details. It lets you scroll to earlier hops. Use the arrow keys to move through matches, Enter to select, and Esc to cancel.
 
 When `history.remember_selection` is enabled and the request includes a verified target host key, the GUI remembers the selected key for that host and preselects it the next time the same host key is seen. The picker still opens and requires you to confirm a selection. Requests without a verified target host key start with the first key.
+
+When `history.enabled` is enabled and the request includes a verified target host key, the picker displays a `First selection` badge if no earlier selection matches the same Target Host and Forwarded path. It applies to the request context, not an individual key, and does not indicate whether a prior key authenticated successfully. The badge is omitted when the target host or forwarded path cannot be verified, or history cannot be read.
 
 When `history.enabled` is enabled, choose `File > History…` or press Ctrl+Shift+H (Cmd+Shift+H on macOS) to review request time, target host and forwarded hops, selected key, selection time, and whether the picker completed, was canceled, or timed out. Right-click a row to copy its displayed information or delete it. Use `Export CSV` to save the full history and host paths. The result describes the picker interaction; it does not indicate whether the SSH server accepted authentication.
 

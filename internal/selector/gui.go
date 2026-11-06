@@ -204,6 +204,7 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 	defer releasePickerReturnWindow(returnWindow)
 	shownAt := time.Now()
 	offered := append([]identity.Identity(nil), identities...)
+	hasPriorContextSelection, selectionHistoryKnown := guiHasSelectionHistory(ctx, history, recordHistory, requestContext)
 	selectedIndex := 0
 	if rememberSelection {
 		selectedIndex = guiPreferredSelectionIndex(ctx, history, requestContext, offered)
@@ -213,6 +214,7 @@ func (s *GUISelector) Select(ctx context.Context, identities []identity.Identity
 		offered:        offered,
 		requestContext: requestContext, detailsText: guiSelectionDetailsText(requestContext, shownAt),
 		shownAt: shownAt, refresh: refresh,
+		hasPriorContextSelection: hasPriorContextSelection, selectionHistoryKnown: selectionHistoryKnown,
 		selected: selectedIndex, focusFilter: true,
 		// The current target is the final entry in a multi-host path.
 		detailsScroll: ui.ScrollState{Y: math.MaxFloat32},
@@ -396,6 +398,40 @@ func guiPreferredSelectionIndex(ctx context.Context, history *selectionhistory.S
 	return 0
 }
 
+func guiHasSelectionHistory(ctx context.Context, history *selectionhistory.Store, recordHistory bool, requestContext SelectionContext) (bool, bool) {
+	target, forwarded, ok := selectionContextHistoryKey(requestContext)
+	if !recordHistory || history == nil || !ok {
+		return false, false
+	}
+	hasSelection, err := history.HasSelectionContext(ctx, target, forwarded)
+	if err != nil {
+		slog.Warn("could not read GUI selection-context history", "error", err)
+		return false, false
+	}
+	return hasSelection, true
+}
+
+func selectionContextHistoryKey(requestContext SelectionContext) (string, []string, bool) {
+	if len(requestContext.HostBindings) == 0 {
+		return "", nil, false
+	}
+	target := requestContext.HostBindings[len(requestContext.HostBindings)-1]
+	if target.IsForwarding || target.Fingerprint == "" {
+		return "", nil, false
+	}
+	forwarded := make([]string, 0, len(requestContext.HostBindings))
+	for _, binding := range requestContext.HostBindings {
+		if !binding.IsForwarding {
+			continue
+		}
+		if binding.Fingerprint == "" {
+			return "", nil, false
+		}
+		forwarded = append(forwarded, binding.Fingerprint)
+	}
+	return target.Fingerprint, forwarded, true
+}
+
 func (s *GUISelector) init() {
 	s.initOnce.Do(func() {
 		if s.queue == nil {
@@ -417,33 +453,35 @@ type guiSelectionResult struct {
 }
 
 type guiPickerState struct {
-	ctx            context.Context
-	identities     []identity.Identity
-	offered        []identity.Identity
-	requestContext SelectionContext
-	detailsText    string
-	shownAt        time.Time
-	refresh        func(context.Context) ([]identity.Identity, error)
-	selected       int
-	query          string
-	lastQuery      string
-	err            string
-	refreshing     bool
-	expired        bool
-	hasSelection   bool
-	chosen         identity.Identity
-	focusTime      uint32
-	closePending   bool
-	searchOptions  []identityOption
-	optionsValid   bool
-	matchesCache   []identityMatch
-	matchesQuery   string
-	matchesValid   bool
-	tableRows      []guitable.IdentityRow
-	detailsScroll  ui.ScrollState
-	tableState     ui.ListState
-	window         *mygo.Window
-	focusFilter    bool
+	ctx                      context.Context
+	identities               []identity.Identity
+	offered                  []identity.Identity
+	requestContext           SelectionContext
+	detailsText              string
+	shownAt                  time.Time
+	refresh                  func(context.Context) ([]identity.Identity, error)
+	selected                 int
+	query                    string
+	lastQuery                string
+	err                      string
+	refreshing               bool
+	expired                  bool
+	hasSelection             bool
+	chosen                   identity.Identity
+	focusTime                uint32
+	closePending             bool
+	searchOptions            []identityOption
+	hasPriorContextSelection bool
+	selectionHistoryKnown    bool
+	optionsValid             bool
+	matchesCache             []identityMatch
+	matchesQuery             string
+	matchesValid             bool
+	tableRows                []guitable.IdentityRow
+	detailsScroll            ui.ScrollState
+	tableState               ui.ListState
+	window                   *mygo.Window
+	focusFilter              bool
 }
 
 func (p *guiPickerState) view(c *ui.Context) {
@@ -512,6 +550,12 @@ func (p *guiPickerState) view(c *ui.Context) {
 			ui.Text(c, "Keys").FontSize(theme.Rem(0.9)).TextColor(keyBadgeText).
 				Background(keyBadgeFill).Padding(theme.Space(0.5), theme.Space(1.5)).Radius(theme.Space(1.5))
 			ui.Text(c, fmt.Sprintf("%d/%d", len(matches), len(p.identities))).FontSize(theme.Rem(0.9)).TextColor(theme.TextMuted)
+			if p.selectionHistoryKnown && !p.hasPriorContextSelection {
+				badgeFill, badgeText := guitable.WarningBadgeColors(theme)
+				ui.Text(c, "First selection").SingleLine().Shrink(0).FontSize(theme.Rem(0.75)).
+					TextColor(badgeText).Background(badgeFill).Padding(theme.Space(0.25), theme.Space(1)).
+					Radius(theme.Space(1)).Tooltip("No prior key selection for this Target Host and forwarded path.")
+			}
 			if p.err != "" {
 				ui.Text(c, p.err).SingleLine().TextColor(theme.Danger).Grow(1)
 			} else {

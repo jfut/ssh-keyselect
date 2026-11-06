@@ -492,7 +492,7 @@ func (p *guiPickerState) view(c *ui.Context) {
 				p.tableState.Selected = &p.selected
 				table := guitable.IdentityTable(c, &p.tableState, p.tableRows, true, false).
 					Grow(1).MinHeight(theme.Space(37))
-				table.ContextMenu(func(menu *ui.Menu) {
+				table.PopoverMenu(func(menu *ui.Menu) {
 					copyItem := menu.Item("Copy").Disabled(p.selected < 0 || p.selected >= len(matches)).
 						Shortcut(ui.Cmd, ui.KeyC)
 					if copyItem.Chosen() && p.selected >= 0 && p.selected < len(matches) {

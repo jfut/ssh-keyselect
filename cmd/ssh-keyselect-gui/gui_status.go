@@ -353,7 +353,7 @@ func (a *guiApp) identityCard(c *ui.Context, theme *ui.Theme) {
 		a.identityTable.KeepOffset = true
 		table := guitable.IdentityTable(c, &a.identityTable, rows, true, true).
 			Grow(1).MinHeight(theme.Space(50))
-		table.ContextMenu(func(menu *ui.Menu) {
+		table.PopoverMenu(func(menu *ui.Menu) {
 			hasSelection := a.selectedIdentity >= 0 && a.selectedIdentity < len(rows)
 			copyItem := menu.Item("Copy").Disabled(!hasSelection).
 				Shortcut(ui.Cmd, ui.KeyC)

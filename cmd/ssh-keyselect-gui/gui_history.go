@@ -347,7 +347,7 @@ func (s *guiHistoryState) view(c *ui.Context) {
 				table := ui.Table(c, &s.tableState, selectionHistoryColumns, len(events), func(row, column int) {
 					event := events[row]
 					cell := guitable.CompactCell(c, row, s.selectedRow, theme)
-					cell.ContextMenu(func(menu *ui.Menu) {
+					cell.PopoverMenu(func(menu *ui.Menu) {
 						copyRow := menu.Item("Copy row").Shortcut(ui.Cmd, ui.KeyC).Disabled(s.deleting)
 						if copyRow.Chosen() && !s.deleting {
 							mygo.Clipboard.WriteText(selectionHistoryCopyText(event))

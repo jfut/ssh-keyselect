@@ -83,9 +83,11 @@ build_macos() {
 	go run ./scripts/generate-platform-icons.go
 	GOFLAGS="$build_flags" go tool mygo build -platform darwin/universal
 	local app_path="dist/mygo/darwin-universal/SSH KeySelect.app"
+	local generated_dmg_path="dist/mygo/darwin-universal/ssh-keyselect-$version.dmg"
 	local dmg_path="dist/mygo/darwin-universal/SSH KeySelect $version.dmg"
 	# Also fix MyGo's standalone app bundle; its DMG contains a separate copy patched below.
 	cp assets/gui/generated/platform/ssh-keyselect.icns "$app_path/Contents/Resources/AppIcon.icns"
+	mv "$generated_dmg_path" "$dmg_path"
 	patch_dmg_icons "$dmg_path"
 	mkdir -p release-packages/macos
 	cp "$dmg_path" release-packages/macos/

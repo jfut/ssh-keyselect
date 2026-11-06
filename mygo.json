@@ -1,5 +1,6 @@
 {
   "name": "SSH KeySelect",
+  "slug": "ssh-keyselect",
   "identifier": "jp.integ.ssh-keyselect-gui",
   "version": "0.0.0",
   "copyright": "Copyright contributors to the ssh-keyselect project",

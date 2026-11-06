@@ -195,7 +195,7 @@ Each frontend connection accepts at most 16 session-binding requests and retains
 
 Unix listener cleanup unlinks only the socket it created, after checking filesystem identity. Automatic unlinking on listener close is disabled so a replacement at the same path remains untouched.
 
-After binding, the listener compares the path entry with the bound socket descriptor and applies mode `0600` through that descriptor. A path swap during setup therefore cannot redirect the permission change to another file.
+Before binding, the listener applies mode `0600` through the socket descriptor so a path swap cannot redirect the permission change. After binding, it verifies the path is a socket owned by the current user and records its filesystem identity for guarded cleanup.
 
 Before replacing a stale Unix socket, the listener treats only `ECONNREFUSED` and `ENOENT` from the connection probe as stale, checks that the socket belongs to the effective user, and rechecks its filesystem identity before removal. Active sockets, non-socket entries, sockets owned by another user, and paths with an inconclusive probe are left untouched. Bind and permission failures also remove the path only when it still names the socket created by that listener.
 

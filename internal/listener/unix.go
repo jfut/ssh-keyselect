@@ -7,6 +7,7 @@
 package listener
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -64,39 +65,37 @@ func ListenWithMode(path string, requested transport.Mode) (net.Listener, func()
 		return nil, nil, fmt.Errorf("inspect listen socket: %w", err)
 	}
 
-	ln, err := net.Listen("unix", path)
+	listenConfig := net.ListenConfig{Control: func(_, _ string, raw syscall.RawConn) error {
+		var chmodErr error
+		if err := raw.Control(func(fd uintptr) {
+			chmodErr = syscall.Fchmod(int(fd), 0600)
+		}); err != nil {
+			return err
+		}
+		if chmodErr != nil {
+			return fmt.Errorf("set Unix socket permissions: %w", chmodErr)
+		}
+		return nil
+	}}
+	ln, err := listenConfig.Listen(context.Background(), "unix", path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listen on Unix socket: %w", err)
 	}
 	// Cleanup checks ownership before unlinking; net.UnixListener's automatic unlink would bypass that check.
 	unixListener := ln.(*net.UnixListener)
 	unixListener.SetUnlinkOnClose(false)
-	boundSocket, err := unixListener.File()
+	created, err := os.Lstat(path)
 	if err != nil {
-		_ = ln.Close()
-		return nil, nil, fmt.Errorf("inspect bound Unix socket: %w", err)
-	}
-	created, statErr := boundSocket.Stat()
-	if statErr != nil {
-		_ = boundSocket.Close()
-		_ = ln.Close()
-		return nil, nil, fmt.Errorf("inspect bound Unix socket: %w", statErr)
-	}
-	if created.Mode()&os.ModeSocket == 0 {
-		_ = boundSocket.Close()
-		_ = ln.Close()
-		return nil, nil, fmt.Errorf("bound listener is not a Unix socket: %s", path)
-	}
-	current, err := os.Lstat(path)
-	if err != nil {
-		_ = boundSocket.Close()
 		_ = ln.Close()
 		return nil, nil, fmt.Errorf("inspect created Unix socket: %w", err)
 	}
-	if !os.SameFile(created, current) {
-		_ = boundSocket.Close()
+	if created.Mode()&os.ModeSocket == 0 {
 		_ = ln.Close()
-		return nil, nil, fmt.Errorf("listen path was replaced during socket creation: %s", path)
+		return nil, nil, fmt.Errorf("created Unix socket has unexpected type: %s", path)
+	}
+	if err := checkSocketOwner(created, path); err != nil {
+		_ = ln.Close()
+		return nil, nil, fmt.Errorf("listen path was replaced during socket creation: %w", err)
 	}
 	removeCreatedSocket := func() {
 		current, err := os.Lstat(path)
@@ -104,19 +103,12 @@ func ListenWithMode(path string, requested transport.Mode) (net.Listener, func()
 			_ = os.Remove(path)
 		}
 	}
-	if err := boundSocket.Chmod(0600); err != nil {
-		_ = boundSocket.Close()
+	if created.Mode().Perm() != 0600 {
 		removeCreatedSocket()
 		_ = ln.Close()
-		return nil, nil, fmt.Errorf("set Unix socket permissions: %w", err)
+		return nil, nil, fmt.Errorf("created Unix socket has unexpected permissions: %s", path)
 	}
-	closeErr := boundSocket.Close()
-	if closeErr != nil {
-		removeCreatedSocket()
-		_ = ln.Close()
-		return nil, nil, fmt.Errorf("close bound Unix socket handle: %w", closeErr)
-	}
-	current, err = os.Lstat(path)
+	current, err := os.Lstat(path)
 	if err != nil || !os.SameFile(created, current) {
 		removeCreatedSocket()
 		_ = ln.Close()

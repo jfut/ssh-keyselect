@@ -33,6 +33,6 @@ func guiFormatPathInput(path string) string { return path }
 
 func guiFilePathFromDisplay(path string) string { return path }
 
-func guiListenPathForConfig(endpoint string) string { return endpoint }
+func guiEndpointPathForConfig(endpoint string) string { return endpoint }
 
 func guiNormalizeListenPathForMode(endpoint string, _ transport.Mode) string { return endpoint }

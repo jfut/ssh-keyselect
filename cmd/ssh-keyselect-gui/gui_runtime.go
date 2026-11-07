@@ -101,19 +101,20 @@ type guiListenerState struct {
 
 // guiRuntime restarts serving at a changed endpoint and invalidates old client selections.
 type guiRuntime struct {
-	mu              sync.Mutex
-	ctx             context.Context
-	server          *agentproxy.Server
-	agent           *guiEndpointAgent
-	loggerOutput    io.Writer
-	onServeError    func(error)
-	listenerState   *guiListenerState
-	listenPath      string
-	listenMode      transport.Mode
-	currentLogLevel string
-	currentLogFile  string
-	logOutput       *guiLogOutput
-	logLevel        *slog.LevelVar
+	mu                 sync.Mutex
+	ctx                context.Context
+	server             *agentproxy.Server
+	agent              *guiEndpointAgent
+	loggerOutput       io.Writer
+	onServeError       func(error)
+	listenerState      *guiListenerState
+	listenPath         string
+	listenMode         transport.Mode
+	currentLogLevel    string
+	currentLogFile     string
+	defaultLogFilePath string
+	logOutput          *guiLogOutput
+	logLevel           *slog.LevelVar
 }
 
 func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
@@ -130,15 +131,18 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 	if err != nil {
 		return "", "", err
 	}
-	cfg.Log.File = config.ExpandPath(cfg.Log.File)
-	logFileChanged := r.currentLogFile != cfg.Log.File
+	logFilePath := config.ExpandPath(cfg.Log.File)
+	if logFilePath == "" {
+		logFilePath = r.defaultLogFilePath
+	}
+	logFileChanged := r.currentLogFile != logFilePath
 	var preparedLogFile *os.File
 	if logFileChanged {
 		if r.logOutput == nil {
 			return "", "", errors.New("GUI log output is unavailable")
 		}
 		var err error
-		preparedLogFile, err = r.logOutput.open(cfg.Log.File)
+		preparedLogFile, err = r.logOutput.open(logFilePath)
 		if err != nil {
 			return "", "", err
 		}
@@ -155,7 +159,7 @@ func (r *guiRuntime) Apply(cfg config.Config) (string, transport.Mode, error) {
 		if logFileChanged {
 			r.logOutput.replace(preparedLogFile)
 			preparedLogFile = nil
-			r.currentLogFile = cfg.Log.File
+			r.currentLogFile = logFilePath
 		}
 		if r.currentLogLevel != cfg.Log.Level {
 			if r.logLevel != nil {

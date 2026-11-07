@@ -8,10 +8,10 @@ package main
 import (
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/egoist/mygo"
@@ -27,7 +27,10 @@ import (
 
 // guiConfigForDisk stores endpoint paths in the native format for this OS.
 func guiConfigForDisk(cfg config.Config) config.Config {
-	cfg.Agent.Listen = guiListenPathForConfig(cfg.Agent.Listen)
+	if _, environmentBacked := config.UpstreamEnvironmentVariable(cfg.Agent.Upstream); !environmentBacked {
+		cfg.Agent.Upstream = guiEndpointPathForConfig(cfg.Agent.Upstream)
+	}
+	cfg.Agent.Listen = guiEndpointPathForConfig(cfg.Agent.Listen)
 	return cfg
 }
 
@@ -600,7 +603,7 @@ type guiSettingsValues struct {
 	listenMode                       string
 	logLevel                         string
 	theme                            string
-	selectionTimeout                 float64
+	selectionTimeout                 string
 	allowUnboundSigningOnBindFailure bool
 }
 
@@ -615,6 +618,7 @@ type guiSettingsState struct {
 	resolvedUpstream                 string
 	listenPath                       string
 	logFile                          string
+	logPlaceholder                   string
 	historyFile                      string
 	historyPlaceholder               string
 	historyEnabled                   bool
@@ -623,7 +627,7 @@ type guiSettingsState struct {
 	listenMode                       string
 	logLevel                         string
 	theme                            string
-	selectionTimeout                 float64
+	selectionTimeout                 string
 	allowUnboundSigningOnBindFailure bool
 	initialListenMode                transport.Mode
 	previousListenMode               string
@@ -665,7 +669,7 @@ func (a *guiApp) openSettings() {
 	}
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: "Settings", Parent: a.window, Modal: true,
-		Width: 600, Height: height, MinWidth: 580, MinHeight: minHeight,
+		Width: 620, Height: height, MinWidth: 580, MinHeight: minHeight,
 		Content: ui.View(state.view),
 	})
 	state.window = window
@@ -715,17 +719,18 @@ func newGUISettingsState(app *guiApp, cfg config.Config) (*guiSettingsState, err
 	if err != nil {
 		return nil, err
 	}
+	logPlaceholder := guiDisplayFilePath(guiDefaultLogFilePath(app.userDataPath))
 	state := &guiSettingsState{
 		app: app, cfg: cfg,
 		upstreamSource: upstreamSource, upstreamPath: guiDisplayEndpointPath(upstreamEndpoint),
 		upstreamEnvName: upstreamEnvName, resolvedUpstream: upstreamEndpoint,
 		listenPath: guiDisplayEndpointPath(listenEndpoint), logFile: guiDisplayFilePath(cfg.Log.File),
-		historyFile:        guiDisplayFilePath(strings.TrimSpace(cfg.History.Path)),
+		logPlaceholder: logPlaceholder, historyFile: guiDisplayFilePath(strings.TrimSpace(cfg.History.Path)),
 		historyPlaceholder: guiDisplayFilePath(historyPlaceholder), historyEnabled: cfg.History.Enabled,
 		rememberSelection: cfg.History.RememberSelection,
 		upstreamMode:      upstreamMode, listenMode: listenMode, logLevel: strings.ToLower(cfg.Log.Level),
 		theme:                            guiThemeLabel(cfg.GUI.Theme),
-		selectionTimeout:                 float64(cfg.Agent.SelectionTimeout),
+		selectionTimeout:                 guiSelectionTimeoutForDisplay(cfg.Agent.SelectionTimeout),
 		allowUnboundSigningOnBindFailure: cfg.Agent.AllowUnboundSigningOnBindFailure,
 		initialListenMode:                initialListenMode, previousListenMode: listenMode,
 		lastFilesystemPath: func() string {
@@ -834,11 +839,19 @@ func (s *guiSettingsState) selectionSection(c *ui.Context, theme *ui.Theme) {
 		ui.Text(c, "Key selection").FontWeight(500)
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Timeout").Width(theme.Space(26)).Shrink(0)
-			// Keep 86400 editable so Apply can report the invalid endpoint instead of reverting it.
-			ui.NumberInput(c, &s.selectionTimeout, 1, 86400, 1).Label("Key selection timeout")
+			ui.TextInput(c, &s.selectionTimeout).
+				Label("Key selection timeout").Placeholder(strconv.Itoa(config.Default().Agent.SelectionTimeout)).Grow(1)
 			ui.Text(c, "seconds").TextColor(theme.TextMuted)
 		})
 	})
+}
+
+// guiSelectionTimeoutForDisplay leaves the default visible as an input placeholder.
+func guiSelectionTimeoutForDisplay(seconds int) string {
+	if seconds == config.Default().Agent.SelectionTimeout {
+		return ""
+	}
+	return strconv.Itoa(seconds)
 }
 
 // endpointSection keeps each socket path and transport choice in a compact group.
@@ -919,7 +932,7 @@ func (s *guiSettingsState) loggingSection(c *ui.Context, theme *ui.Theme) {
 		ui.Text(c, "Logging").FontWeight(500)
 		ui.Row(c).Gap(theme.Space(2)).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Log file").Width(theme.Space(26)).Shrink(0)
-			input := ui.TextInput(c, &s.logFile).Label("Log file").Placeholder("Leave blank to log to standard error").Grow(1)
+			input := ui.TextInput(c, &s.logFile).Label("Log file").Placeholder(s.logPlaceholder).Grow(1)
 			if input.Changed() {
 				s.logFile = guiFormatPathInput(s.logFile)
 			}
@@ -1056,9 +1069,6 @@ func (s *guiSettingsState) upstreamEndpoint() (string, error) {
 }
 
 func (s *guiSettingsState) buildConfig() (config.Config, error) {
-	if math.Trunc(s.selectionTimeout) != s.selectionTimeout {
-		return config.Config{}, fmt.Errorf("key selection timeout must be a whole number of seconds")
-	}
 	cfg := s.cfg
 	upstreamMode := guiModeFromDisplay(s.upstreamMode)
 	upstreamEndpoint := ""
@@ -1112,7 +1122,15 @@ func (s *guiSettingsState) buildConfig() (config.Config, error) {
 	cfg.Agent.UpstreamMode = upstreamMode
 	cfg.Agent.Listen = listenEndpoint
 	cfg.Agent.ListenMode = listenMode
-	cfg.Agent.SelectionTimeout = int(s.selectionTimeout)
+	selectionTimeout := config.Default().Agent.SelectionTimeout
+	if value := strings.TrimSpace(s.selectionTimeout); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return config.Config{}, fmt.Errorf("key selection timeout must be a whole number of seconds")
+		}
+		selectionTimeout = parsed
+	}
+	cfg.Agent.SelectionTimeout = selectionTimeout
 	cfg.Agent.AllowUnboundSigningOnBindFailure = s.allowUnboundSigningOnBindFailure
 	cfg.Log.File = config.ExpandPath(guiFilePathFromDisplay(s.logFile))
 	cfg.Log.Level = s.logLevel
@@ -1131,6 +1149,9 @@ func (s *guiSettingsState) browseLogFile() {
 	s.browsingLog = true
 	window := s.window
 	current := guiFilePathFromDisplay(s.logFile)
+	if current == "" {
+		current = guiFilePathFromDisplay(s.logPlaceholder)
+	}
 	go func() {
 		path, err := guiChooseLogFile(window, current)
 		if window == nil || window.IsDestroyed() {

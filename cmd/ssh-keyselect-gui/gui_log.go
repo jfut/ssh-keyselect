@@ -34,6 +34,11 @@ func newGUILogOutput(fallback io.Writer, path string) (*guiLogOutput, error) {
 	return output, nil
 }
 
+// guiDefaultLogFilePath keeps the default log beside the GUI's other application data.
+func guiDefaultLogFilePath(userDataPath string) string {
+	return filepath.Join(userDataPath, "ssh-keyselect.log")
+}
+
 // newGUILogger shares a live level with the proxy and UI while keeping one destination writer.
 func newGUILogger(output io.Writer, level *slog.LevelVar, configured string) *slog.Logger {
 	level.Set(guiSlogLevel(configured))

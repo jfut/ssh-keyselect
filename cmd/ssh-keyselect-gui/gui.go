@@ -89,10 +89,10 @@ type guiApp struct {
 
 type guiOptions struct {
 	Config                           *string          `help:"TOML configuration file." placeholder:"FILE"`
-	Listen                           *string          `help:"Frontend endpoint (default: HOME socket, or the fixed Windows OpenSSH named-pipe endpoint)." placeholder:"ENDPOINT"`
-	ListenMode                       *string          `help:"Frontend protocol mode (auto, cygwin, unix, named-pipe, wsl1)." placeholder:"MODE"`
 	Upstream                         *string          `help:"Upstream endpoint (default: UPSTREAM_SSH_AUTH_SOCK, then SSH_AUTH_SOCK)." placeholder:"ENDPOINT"`
 	UpstreamMode                     *string          `help:"Upstream protocol mode (auto, cygwin, unix, named-pipe, wsl1)." placeholder:"MODE"`
+	Listen                           *string          `help:"Frontend endpoint (default: HOME socket, or the fixed Windows OpenSSH named-pipe endpoint)." placeholder:"ENDPOINT"`
+	ListenMode                       *string          `help:"Frontend protocol mode (auto, cygwin, unix, named-pipe, wsl1)." placeholder:"MODE"`
 	AllowUnboundSigningOnBindFailure *bool            `help:"Allow signing without upstream session binding after an explicit upstream refusal (weakens upstream restrictions)."`
 	LogLevel                         *string          `help:"Log level (off, debug, info, warn, error)." placeholder:"LEVEL"`
 	Version                          kong.VersionFlag `help:"Print version information and quit."`
@@ -132,16 +132,6 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return cmdutil.ReportError(stderr, guiCommandName, err)
 	}
-	if options.Listen != nil {
-		cfg.Agent.Listen = config.ExpandPath(*options.Listen)
-	}
-	if options.ListenMode != nil {
-		mode, modeErr := transport.ParseMode(*options.ListenMode)
-		if modeErr != nil {
-			return cmdutil.ReportError(stderr, guiCommandName, modeErr)
-		}
-		cfg.Agent.ListenMode = mode
-	}
 	if options.Upstream != nil {
 		cfg.Agent.Upstream = config.ExpandPath(*options.Upstream)
 	}
@@ -151,6 +141,16 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 			return cmdutil.ReportError(stderr, guiCommandName, modeErr)
 		}
 		cfg.Agent.UpstreamMode = mode
+	}
+	if options.Listen != nil {
+		cfg.Agent.Listen = config.ExpandPath(*options.Listen)
+	}
+	if options.ListenMode != nil {
+		mode, modeErr := transport.ParseMode(*options.ListenMode)
+		if modeErr != nil {
+			return cmdutil.ReportError(stderr, guiCommandName, modeErr)
+		}
+		cfg.Agent.ListenMode = mode
 	}
 	if options.LogLevel != nil {
 		cfg.Log.Level = *options.LogLevel
@@ -187,8 +187,18 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 			return cmdutil.ReportError(stderr, guiCommandName, err)
 		}
 	}
+	mygo.App.SetName("SSH KeySelect")
+	mygo.App.SetVersion(version)
+	userDataPath, err := setGUIUserDataPath()
+	if err != nil {
+		return cmdutil.ReportError(stderr, guiCommandName, err)
+	}
+	logFilePath := cfg.Log.File
+	if logFilePath == "" {
+		logFilePath = guiDefaultLogFilePath(userDataPath)
+	}
 
-	logOutput, err := newGUILogOutput(stderr, cfg.Log.File)
+	logOutput, err := newGUILogOutput(stderr, logFilePath)
 	if err != nil {
 		return cmdutil.ReportError(stderr, guiCommandName, err)
 	}
@@ -207,7 +217,8 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	server.SetAllowUnboundSigningOnBindFailure(cfg.Agent.AllowUnboundSigningOnBindFailure)
 	app := &guiApp{
 		ctx: ctx, stop: stop, logger: logger, loggerOutput: logOutput, cfg: cfg,
-		configPath: configPath, actualListen: listenPath, listenMode: effectiveListenMode,
+		userDataPath: userDataPath,
+		configPath:   configPath, actualListen: listenPath, listenMode: effectiveListenMode,
 		endpointAgent: endpointAgent, server: server, selector: guiSelector,
 		selectedIdentity: -1,
 	}
@@ -220,8 +231,9 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 	})
 	app.runtime = &guiRuntime{
 		ctx: ctx, server: server, agent: endpointAgent, loggerOutput: logOutput, logOutput: logOutput, logLevel: &logLevel,
-		listenPath: listenPath, listenMode: effectiveListenMode, currentLogLevel: cfg.Log.Level,
-		currentLogFile: cfg.Log.File,
+		defaultLogFilePath: guiDefaultLogFilePath(userDataPath),
+		listenPath:         listenPath, listenMode: effectiveListenMode, currentLogLevel: cfg.Log.Level,
+		currentLogFile: logFilePath,
 	}
 	app.runtime.onServeError = func(serveErr error) {
 		if window := app.mainWindow.Load(); window != nil {
@@ -236,13 +248,6 @@ func executeGUI(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	mygo.App.SetName("SSH KeySelect")
-	mygo.App.SetVersion(version)
-	userDataPath, err := setGUIUserDataPath()
-	if err != nil {
-		return cmdutil.ReportError(stderr, guiCommandName, err)
-	}
-	app.userDataPath = userDataPath
 	if cfg.History.Enabled || cfg.History.RememberSelection {
 		historyPath, pathErr := guiHistoryDatabasePath(userDataPath, cfg.History.Path)
 		if pathErr != nil {

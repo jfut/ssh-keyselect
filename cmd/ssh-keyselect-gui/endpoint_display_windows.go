@@ -60,8 +60,8 @@ func guiFilePathFromDisplay(path string) string {
 	return strings.ReplaceAll(path, "¥", `\`)
 }
 
-// guiListenPathForConfig writes filesystem endpoints in native Windows form while preserving named pipes.
-func guiListenPathForConfig(endpoint string) string {
+// guiEndpointPathForConfig writes filesystem endpoints in native Windows form while preserving named pipes.
+func guiEndpointPathForConfig(endpoint string) string {
 	if endpoint == "" || winpath.IsNamedPipe(endpoint) {
 		return endpoint
 	}

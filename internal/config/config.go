@@ -43,9 +43,9 @@ type HistoryConfig struct {
 }
 
 type AgentConfig struct {
-	Listen                           string         `toml:"listen"`
 	Upstream                         string         `toml:"upstream"`
 	UpstreamMode                     transport.Mode `toml:"upstream_mode"`
+	Listen                           string         `toml:"listen"`
 	ListenMode                       transport.Mode `toml:"listen_mode"`
 	SelectionTimeout                 int            `toml:"selection_timeout"`
 	AllowUnboundSigningOnBindFailure bool           `toml:"allow_unbound_signing_on_bind_failure"`
@@ -63,9 +63,15 @@ type GUIConfig struct {
 
 type saveConfig struct {
 	Agent   saveAgentConfig    `toml:"agent"`
-	Log     LogConfig          `toml:"log"`
+	Log     saveLogConfig      `toml:"log"`
 	History *saveHistoryConfig `toml:"history,omitempty"`
 	GUI     GUIConfig          `toml:"gui"`
+}
+
+// saveLogConfig writes the log path with the same TOML path formatting as other paths.
+type saveLogConfig struct {
+	File  tomlPath `toml:"file,omitempty"`
+	Level string   `toml:"level"`
 }
 
 type saveHistoryConfig struct {
@@ -75,12 +81,12 @@ type saveHistoryConfig struct {
 }
 
 type saveAgentConfig struct {
-	Listen                           tomlPath       `toml:"listen"`
 	Upstream                         tomlPath       `toml:"upstream"`
 	UpstreamMode                     transport.Mode `toml:"upstream_mode"`
+	Listen                           tomlPath       `toml:"listen"`
 	ListenMode                       transport.Mode `toml:"listen_mode"`
-	SelectionTimeout                 int            `toml:"selection_timeout"`
-	AllowUnboundSigningOnBindFailure bool           `toml:"allow_unbound_signing_on_bind_failure"`
+	SelectionTimeout                 *int           `toml:"selection_timeout,omitempty"`
+	AllowUnboundSigningOnBindFailure *bool          `toml:"allow_unbound_signing_on_bind_failure,omitempty"`
 }
 
 type tomlPath string
@@ -110,15 +116,24 @@ func isTOMLLiteralString(value string) bool {
 func configForSave(cfg Config) saveConfig {
 	encoded := saveConfig{
 		Agent: saveAgentConfig{
-			Listen:                           tomlPath(cfg.Agent.Listen),
-			Upstream:                         tomlPath(cfg.Agent.Upstream),
-			UpstreamMode:                     cfg.Agent.UpstreamMode,
-			ListenMode:                       cfg.Agent.ListenMode,
-			SelectionTimeout:                 cfg.Agent.SelectionTimeout,
-			AllowUnboundSigningOnBindFailure: cfg.Agent.AllowUnboundSigningOnBindFailure,
+			Upstream:     tomlPath(cfg.Agent.Upstream),
+			UpstreamMode: cfg.Agent.UpstreamMode,
+			Listen:       tomlPath(cfg.Agent.Listen),
+			ListenMode:   cfg.Agent.ListenMode,
 		},
-		Log: cfg.Log,
+		Log: saveLogConfig{
+			File:  tomlPath(cfg.Log.File),
+			Level: cfg.Log.Level,
+		},
 		GUI: cfg.GUI,
+	}
+	if cfg.Agent.SelectionTimeout != defaultSelectionTimeoutSeconds {
+		selectionTimeout := cfg.Agent.SelectionTimeout
+		encoded.Agent.SelectionTimeout = &selectionTimeout
+	}
+	if cfg.Agent.AllowUnboundSigningOnBindFailure {
+		enabled := true
+		encoded.Agent.AllowUnboundSigningOnBindFailure = &enabled
 	}
 	if cfg.History.Path != "" || !cfg.History.Enabled || !cfg.History.RememberSelection {
 		history := &saveHistoryConfig{Path: tomlPath(cfg.History.Path)}
@@ -240,14 +255,14 @@ func Load(path string) (Config, error) {
 		}
 	}
 
-	if value := os.Getenv("SSH_KEYSELECT_LISTEN"); value != "" {
-		cfg.Agent.Listen = value
-	}
 	if cfg.Agent.Upstream == "" {
 		cfg.Agent.Upstream = UpstreamFromEnvironment()
 	}
-	cfg.Agent.Listen = ExpandPath(cfg.Agent.Listen)
 	cfg.Agent.Upstream = ExpandPath(cfg.Agent.Upstream)
+	if value := os.Getenv("SSH_KEYSELECT_LISTEN"); value != "" {
+		cfg.Agent.Listen = value
+	}
+	cfg.Agent.Listen = ExpandPath(cfg.Agent.Listen)
 	cfg.Log.File = ExpandPath(cfg.Log.File)
 	cfg.History.Path = ExpandPath(cfg.History.Path)
 	if err := cfg.Validate(); err != nil {

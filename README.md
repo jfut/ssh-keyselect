@@ -371,13 +371,14 @@ On Windows and Linux, use `--config FILE` to select another file. Command-line v
 - When `agent.upstream` is empty, `UPSTREAM_SSH_AUTH_SOCK` takes precedence over `SSH_AUTH_SOCK`. If neither is set, the GUI uses the native OpenSSH agent endpoint: `\\.\pipe\openssh-ssh-agent` on Windows and `~/.ssh/ssh-agent.sock` on macOS and Linux.
 - To keep the upstream endpoint tied to a changing environment variable, set `agent.upstream = "env:SSH_AUTH_SOCK"`, or choose Environment variable in GUI Settings and enter its name. The GUI resolves this reference at startup and when Settings are applied, while saving the `env:NAME` reference in the config file. The variable must be set and non-empty.
 - Environment variables in ordinary paths and a leading `~` are expanded using the GUI process environment.
+- `[agent].allow_unbound_signing_on_bind_failure` defaults to `false`; GUI Settings omits it from the configuration file unless it is enabled.
 - `[history].path` selects the selection-history database when set. If omitted or empty, the GUI uses `history.sqlite` in the application data folder. Relative paths are resolved from that folder. GUI Settings leaves the field blank and shows the resolved default path as its placeholder. It saves `history.path` only when you enter or choose a path.
 - `[history].enabled` controls whether the GUI records and shows selection history. `[history].remember_selection` controls whether it remembers the last selected key for each verified target host. Both default to `true`, can be changed in GUI Settings, and are written to the config only when set to `false`. When both are `false`, the GUI does not create or open the SQLite database.
 - If the configured Listen endpoint is active or blocked by a non-socket file, the GUI starts with the proxy `Not configured`. A stale socket owned by the current user is replaced when KeySelect confirms that it is no longer listening.
 
-The configuration loader rejects unknown keys. Logging is off by default. Set `log.level` to enable it and optionally set `log.file` to append logs to a file. When `log.file` is empty, logs go to standard error.
+The configuration loader rejects unknown keys. Logging is off by default. Set `log.level` to enable it and optionally set `log.file` to choose a log destination. When `log.file` is empty, the GUI uses `ssh-keyselect.log` in its application data directory. Settings shows this default as a placeholder and leaves it out of the configuration file.
 
-The key selection timeout defaults to 120 seconds. In GUI Settings, set `agent.selection_timeout`. For `ssh-keyselect ssh`, pass `--selection-timeout SECONDS`.
+The key selection timeout defaults to 120 seconds. GUI Settings shows `120` as a placeholder; leave the field blank to use the default and omit `agent.selection_timeout` from the configuration file. Enter a value from 1 to 86,399 to override it. For `ssh-keyselect ssh`, pass `--selection-timeout SECONDS`.
 
 If, after a timeout, the SSH client prints the errors below and the server's `/var/log/secure` contains `penalty: exceeded LoginGraceTime`, set the Key selection Timeout to match that server's `LoginGraceTime` value in seconds.
 
@@ -400,12 +401,11 @@ listen = 'C:\Users\USERNAME\.ssh\ssh-keyselect-agent.sock'
 
 upstream_mode = "auto"
 listen_mode = "cygwin"
-selection_timeout = 120 # seconds (1 to 86399)
+# selection_timeout = 120 # seconds (1 to 86399)
 # Allows signing without upstream destination binding after an explicit refusal.
-allow_unbound_signing_on_bind_failure = false
+# allow_unbound_signing_on_bind_failure = true
 
 [log]
-file = ""
 level = "off"
 
 [history]
